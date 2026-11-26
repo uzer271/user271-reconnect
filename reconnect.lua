@@ -14,6 +14,7 @@ if old then
 	old:Destroy()
 end
 
+-- State
 local autoReconnect = true
 local sameServer = true
 local timerEnabled = false
@@ -21,11 +22,21 @@ local timerHours = 3
 local elapsedSeconds = 0
 local isRejoining = false
 
+local autoDigEnabled = false
+local autoTokensEnabled = false
+
 local speedEnabled = false
 local moveSpeed = 35
 local flyEnabled = false
+local noclipEnabled = false
 local flySpeed = 50
 local mobileBtnVisible = false
+
+local DEFAULT_W = 286
+local DEFAULT_H = 310
+local menuWidth = DEFAULT_W
+local menuHeight = DEFAULT_H
+
 local currentTab = "Main"
 local copyResetToken = 0
 
@@ -40,8 +51,8 @@ sg.Parent = pg
 
 local f = Instance.new("Frame")
 f.Name = "MainFrame"
-f.Size = UDim2.new(0, 232, 0, 334)
-f.Position = UDim2.new(0.5, -116, 0.2, 0)
+f.Size = UDim2.new(0, menuWidth, 0, menuHeight)
+f.Position = UDim2.new(0.5, -math.floor(menuWidth / 2), 0.2, 0)
 f.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
 f.BorderSizePixel = 0
 f.Active = true
@@ -54,6 +65,7 @@ frameStroke.Thickness = 2.2
 frameStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 frameStroke.Parent = f
 
+-- Header
 local top = Instance.new("TextLabel")
 top.Size = UDim2.new(1, -68, 0, 28)
 top.Position = UDim2.new(0, 8, 0, 0)
@@ -112,6 +124,18 @@ mobileStroke.Thickness = 2.2
 mobileStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 mobileStroke.Parent = mobileBtn
 
+local function setCharacterCollision(canCollide)
+	local char = lp.Character
+	if not char then
+		return
+	end
+	for _, part in ipairs(char:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = canCollide
+		end
+	end
+end
+
 local function stopFly()
 	if flyBV then
 		flyBV:Destroy()
@@ -156,7 +180,9 @@ x.MouseButton1Click:Connect(function()
 		f.Visible = false
 	else
 		flyEnabled = false
+		noclipEnabled = false
 		stopFly()
+		setCharacterCollision(true)
 		sg:Destroy()
 	end
 end)
@@ -165,42 +191,68 @@ mobileBtn.MouseButton1Click:Connect(function()
 	f.Visible = not f.Visible
 end)
 
--- Tabs bar
-local function mkTab(xPos, txt)
+-- Left Sidebar for Tabs
+local SIDEBAR_W = 62
+local sidebar = Instance.new("Frame")
+sidebar.Name = "Sidebar"
+sidebar.Size = UDim2.new(0, SIDEBAR_W, 1, -56)
+sidebar.Position = UDim2.new(0, 6, 0, 30)
+sidebar.BackgroundColor3 = Color3.fromRGB(19, 21, 27)
+sidebar.BorderSizePixel = 0
+sidebar.Parent = f
+Instance.new("UICorner", sidebar).CornerRadius = UDim.new(0, 6)
+
+local function mkSideTab(yPos, txt)
 	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(0, 105, 0, 22)
-	b.Position = UDim2.new(0, xPos, 0, 30)
+	b.Size = UDim2.new(1, -8, 0, 26)
+	b.Position = UDim2.new(0, 4, 0, yPos)
 	b.BackgroundColor3 = Color3.fromRGB(40, 45, 58)
 	b.BorderSizePixel = 0
 	b.Text = txt
 	b.TextColor3 = Color3.new(1, 1, 1)
 	b.Font = Enum.Font.GothamBold
 	b.TextSize = 11
-	b.Parent = f
+	b.Parent = sidebar
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
 	return b
 end
 
-local tabMainBtn = mkTab(8, "Main")
-local tabMiscBtn = mkTab(119, "Misc")
+local tabMainBtn = mkSideTab(6, "Main")
+local tabFarmBtn = mkSideTab(36, "Farm")
+local tabMiscBtn = mkSideTab(66, "Misc")
 
-local mainContainer = Instance.new("Frame")
-mainContainer.Size = UDim2.new(1, 0, 1, -80)
-mainContainer.Position = UDim2.new(0, 0, 0, 56)
-mainContainer.BackgroundTransparency = 1
-mainContainer.Parent = f
+-- Content Area (right of sidebar, responsive to menuWidth & menuHeight)
+local contentArea = Instance.new("Frame")
+contentArea.Name = "ContentArea"
+contentArea.Size = UDim2.new(1, -(SIDEBAR_W + 14), 1, -56)
+contentArea.Position = UDim2.new(0, SIDEBAR_W + 10, 0, 30)
+contentArea.BackgroundTransparency = 1
+contentArea.Parent = f
 
-local miscContainer = Instance.new("Frame")
-miscContainer.Size = UDim2.new(1, 0, 1, -80)
-miscContainer.Position = UDim2.new(0, 0, 0, 56)
-miscContainer.BackgroundTransparency = 1
+local function mkContainer()
+	local c = Instance.new("ScrollingFrame")
+	c.Size = UDim2.new(1, 0, 1, 0)
+	c.BackgroundTransparency = 1
+	c.BorderSizePixel = 0
+	c.ScrollBarThickness = 3
+	c.ScrollBarImageColor3 = Color3.fromRGB(110, 120, 140)
+	c.CanvasSize = UDim2.new(0, 0, 0, 0)
+	c.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	c.Parent = contentArea
+	return c
+end
+
+local mainContainer = mkContainer()
+local farmContainer = mkContainer()
+local miscContainer = mkContainer()
+farmContainer.Visible = false
 miscContainer.Visible = false
-miscContainer.Parent = f
 
+-- Bottom Owner Button
 local ownerBtn = Instance.new("TextButton")
 ownerBtn.Name = "OwnerBtn"
-ownerBtn.Size = UDim2.new(1, -16, 0, 20)
-ownerBtn.Position = UDim2.new(0, 8, 1, -24)
+ownerBtn.Size = UDim2.new(1, -16, 0, 18)
+ownerBtn.Position = UDim2.new(0, 8, 1, -22)
 ownerBtn.BackgroundTransparency = 1
 ownerBtn.BorderSizePixel = 0
 ownerBtn.Text = "Owner: " .. OWNER_HANDLE
@@ -210,25 +262,25 @@ ownerBtn.TextSize = 11
 ownerBtn.TextXAlignment = Enum.TextXAlignment.Left
 ownerBtn.Parent = f
 
-local function mkBtn(parent, y, xPos, w, txt, col)
+local function mkBtn(parent, y, xScale, xOff, wScale, wOff, txt, col)
 	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(0, w, 0, 26)
-	b.Position = UDim2.new(0, xPos, 0, y)
+	b.Size = UDim2.new(wScale, wOff, 0, 25)
+	b.Position = UDim2.new(xScale, xOff, 0, y)
 	b.BackgroundColor3 = col
 	b.BorderSizePixel = 0
 	b.Text = txt
 	b.TextColor3 = Color3.new(1, 1, 1)
 	b.Font = Enum.Font.GothamSemibold
-	b.TextSize = 11
+	b.TextSize = 10
 	b.Parent = parent
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
 	return b
 end
 
--- MAIN TAB ELEMENTS
+-- ==================== MAIN TAB ====================
 local st = Instance.new("TextLabel")
-st.Size = UDim2.new(1, -16, 0, 18)
-st.Position = UDim2.new(0, 8, 0, 0)
+st.Size = UDim2.new(1, -6, 0, 18)
+st.Position = UDim2.new(0, 2, 0, 2)
 st.BackgroundTransparency = 1
 st.Text = "Status: Active"
 st.TextColor3 = Color3.fromRGB(140, 220, 160)
@@ -237,15 +289,16 @@ st.TextSize = 11
 st.TextXAlignment = Enum.TextXAlignment.Left
 st.Parent = mainContainer
 
-local b1 = mkBtn(mainContainer, 22, 8, 216, "Auto-Reconnect: ON", Color3.fromRGB(45, 140, 80))
-local b2 = mkBtn(mainContainer, 52, 8, 216, "Server: Same", Color3.fromRGB(40, 45, 58))
-local b3 = mkBtn(mainContainer, 82, 8, 216, "Test Error", Color3.fromRGB(175, 105, 35))
-local tToggle = mkBtn(mainContainer, 112, 8, 118, "Timer: OFF", Color3.fromRGB(55, 60, 75))
-local tMinus = mkBtn(mainContainer, 112, 130, 26, "-", Color3.fromRGB(40, 45, 58))
+local b1 = mkBtn(mainContainer, 24, 0, 2, 1, -6, "Auto-Reconnect: ON", Color3.fromRGB(45, 140, 80))
+local b2 = mkBtn(mainContainer, 53, 0, 2, 1, -6, "Server: Same", Color3.fromRGB(40, 45, 58))
+local b3 = mkBtn(mainContainer, 82, 0, 2, 1, -6, "Test Error", Color3.fromRGB(175, 105, 35))
+
+local tToggle = mkBtn(mainContainer, 111, 0, 2, 0.52, -4, "Timer: OFF", Color3.fromRGB(55, 60, 75))
+local tMinus = mkBtn(mainContainer, 111, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
 
 local tVal = Instance.new("TextLabel")
-tVal.Size = UDim2.new(0, 40, 0, 26)
-tVal.Position = UDim2.new(0, 160, 0, 112)
+tVal.Size = UDim2.new(0.20, -2, 0, 25)
+tVal.Position = UDim2.new(0.66, 2, 0, 111)
 tVal.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
 tVal.BorderSizePixel = 0
 tVal.Text = "3h"
@@ -255,11 +308,11 @@ tVal.TextSize = 11
 tVal.Parent = mainContainer
 Instance.new("UICorner", tVal).CornerRadius = UDim.new(0, 6)
 
-local tPlus = mkBtn(mainContainer, 112, 204, 26, "+", Color3.fromRGB(40, 45, 58))
+local tPlus = mkBtn(mainContainer, 111, 0.86, 2, 0.14, -6, "+", Color3.fromRGB(40, 45, 58))
 
 local tInfo = Instance.new("TextLabel")
-tInfo.Size = UDim2.new(1, -16, 0, 16)
-tInfo.Position = UDim2.new(0, 8, 0, 142)
+tInfo.Size = UDim2.new(1, -6, 0, 16)
+tInfo.Position = UDim2.new(0, 2, 0, 140)
 tInfo.BackgroundTransparency = 1
 tInfo.Text = "Timer: OFF (3h)"
 tInfo.TextColor3 = Color3.fromRGB(175, 182, 198)
@@ -268,55 +321,131 @@ tInfo.TextSize = 10
 tInfo.TextXAlignment = Enum.TextXAlignment.Left
 tInfo.Parent = mainContainer
 
--- MISC TAB ELEMENTS
+-- ==================== FARM TAB ====================
+local farmTitle = Instance.new("TextLabel")
+farmTitle.Size = UDim2.new(1, -6, 0, 18)
+farmTitle.Position = UDim2.new(0, 2, 0, 2)
+farmTitle.BackgroundTransparency = 1
+farmTitle.Text = "Bee Swarm Auto-Farm"
+farmTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
+farmTitle.Font = Enum.Font.GothamSemibold
+farmTitle.TextSize = 11
+farmTitle.TextXAlignment = Enum.TextXAlignment.Left
+farmTitle.Parent = farmContainer
+
+local autoDigBtn = mkBtn(farmContainer, 24, 0, 2, 1, -6, "Auto-Dig: OFF", Color3.fromRGB(55, 60, 75))
+local autoTokensBtn = mkBtn(farmContainer, 53, 0, 2, 1, -6, "Auto-Collect Tokens: OFF", Color3.fromRGB(55, 60, 75))
+
+local farmHint = Instance.new("TextLabel")
+farmHint.Size = UDim2.new(1, -6, 0, 44)
+farmHint.Position = UDim2.new(0, 2, 0, 84)
+farmHint.BackgroundTransparency = 1
+farmHint.Text = "Auto-Dig swings equipped collector. Auto-Collect pulls toward nearby field tokens."
+farmHint.TextColor3 = Color3.fromRGB(150, 158, 175)
+farmHint.Font = Enum.Font.Gotham
+farmHint.TextSize = 10
+farmHint.TextWrapped = true
+farmHint.TextXAlignment = Enum.TextXAlignment.Left
+farmHint.Parent = farmContainer
+
+-- ==================== MISC TAB ====================
 local speedTitle = Instance.new("TextLabel")
-speedTitle.Size = UDim2.new(1, -16, 0, 18)
-speedTitle.Position = UDim2.new(0, 8, 0, 0)
+speedTitle.Size = UDim2.new(1, -6, 0, 16)
+speedTitle.Position = UDim2.new(0, 2, 0, 2)
 speedTitle.BackgroundTransparency = 1
 speedTitle.Text = "Player movespeed (1 - 100)"
 speedTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
 speedTitle.Font = Enum.Font.GothamSemibold
-speedTitle.TextSize = 11
+speedTitle.TextSize = 10
 speedTitle.TextXAlignment = Enum.TextXAlignment.Left
 speedTitle.Parent = miscContainer
 
-local speedToggleBtn = mkBtn(miscContainer, 20, 8, 118, "Movespeed: OFF", Color3.fromRGB(55, 60, 75))
-local speedMinusBtn = mkBtn(miscContainer, 20, 130, 26, "-", Color3.fromRGB(40, 45, 58))
-local speedValBtn = mkBtn(miscContainer, 20, 160, 40, tostring(moveSpeed), Color3.fromRGB(32, 35, 44))
+local speedToggleBtn = mkBtn(miscContainer, 20, 0, 2, 0.52, -4, "Speed: OFF", Color3.fromRGB(55, 60, 75))
+local speedMinusBtn = mkBtn(miscContainer, 20, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
+local speedValBtn = mkBtn(miscContainer, 20, 0.66, 2, 0.20, -2, tostring(moveSpeed), Color3.fromRGB(32, 35, 44))
 speedValBtn.Font = Enum.Font.GothamBold
-local speedPlusBtn = mkBtn(miscContainer, 20, 204, 26, "+", Color3.fromRGB(40, 45, 58))
+local speedPlusBtn = mkBtn(miscContainer, 20, 0.86, 2, 0.14, -6, "+", Color3.fromRGB(40, 45, 58))
 
+-- Fly + Noclip row
 local flyTitle = Instance.new("TextLabel")
-flyTitle.Size = UDim2.new(1, -16, 0, 18)
-flyTitle.Position = UDim2.new(0, 8, 0, 52)
+flyTitle.Size = UDim2.new(1, -6, 0, 16)
+flyTitle.Position = UDim2.new(0, 2, 0, 50)
 flyTitle.BackgroundTransparency = 1
-flyTitle.Text = "Fly & Fly movespeed (1 - 150)"
+flyTitle.Text = "Fly, Noclip & Fly speed (1 - 150)"
 flyTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
 flyTitle.Font = Enum.Font.GothamSemibold
-flyTitle.TextSize = 11
+flyTitle.TextSize = 10
 flyTitle.TextXAlignment = Enum.TextXAlignment.Left
 flyTitle.Parent = miscContainer
 
-local flyToggleBtn = mkBtn(miscContainer, 72, 8, 118, "Fly: OFF", Color3.fromRGB(55, 60, 75))
-local flyMinusBtn = mkBtn(miscContainer, 72, 130, 26, "-", Color3.fromRGB(40, 45, 58))
-local flyValBtn = mkBtn(miscContainer, 72, 160, 40, tostring(flySpeed), Color3.fromRGB(32, 35, 44))
+local flyToggleBtn = mkBtn(miscContainer, 68, 0, 2, 0.50, -4, "Fly: OFF", Color3.fromRGB(55, 60, 75))
+local noclipToggleBtn = mkBtn(miscContainer, 68, 0.50, 2, 0.50, -6, "Noclip: OFF", Color3.fromRGB(55, 60, 75))
+
+local flySpeedLbl = Instance.new("TextLabel")
+flySpeedLbl.Size = UDim2.new(0.52, -4, 0, 25)
+flySpeedLbl.Position = UDim2.new(0, 2, 0, 97)
+flySpeedLbl.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
+flySpeedLbl.BorderSizePixel = 0
+flySpeedLbl.Text = "Fly speed"
+flySpeedLbl.TextColor3 = Color3.fromRGB(200, 206, 220)
+flySpeedLbl.Font = Enum.Font.GothamSemibold
+flySpeedLbl.TextSize = 10
+flySpeedLbl.Parent = miscContainer
+Instance.new("UICorner", flySpeedLbl).CornerRadius = UDim.new(0, 6)
+
+local flyMinusBtn = mkBtn(miscContainer, 97, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
+local flyValBtn = mkBtn(miscContainer, 97, 0.66, 2, 0.20, -2, tostring(flySpeed), Color3.fromRGB(32, 35, 44))
 flyValBtn.Font = Enum.Font.GothamBold
-local flyPlusBtn = mkBtn(miscContainer, 72, 204, 26, "+", Color3.fromRGB(40, 45, 58))
+local flyPlusBtn = mkBtn(miscContainer, 97, 0.86, 2, 0.14, -6, "+", Color3.fromRGB(40, 45, 58))
 
-local mobToggleBtn = mkBtn(miscContainer, 108, 8, 216, "Show mobile button: OFF", Color3.fromRGB(55, 60, 75))
+-- Mobile Button toggle
+local mobToggleBtn = mkBtn(miscContainer, 128, 0, 2, 1, -6, "Show mobile button: OFF", Color3.fromRGB(55, 60, 75))
 
-local miscHint = Instance.new("TextLabel")
-miscHint.Size = UDim2.new(1, -16, 0, 32)
-miscHint.Position = UDim2.new(0, 8, 0, 140)
-miscHint.BackgroundTransparency = 1
-miscHint.Text = "Fly uses camera direction + joystick. Tap numbers for quick presets."
-miscHint.TextColor3 = Color3.fromRGB(150, 158, 175)
-miscHint.Font = Enum.Font.Gotham
-miscHint.TextSize = 10
-miscHint.TextWrapped = true
-miscHint.TextXAlignment = Enum.TextXAlignment.Left
-miscHint.Parent = miscContainer
+-- Menu Size controls (Width & Height)
+local sizeTitle = Instance.new("TextLabel")
+sizeTitle.Size = UDim2.new(1, -6, 0, 16)
+sizeTitle.Position = UDim2.new(0, 2, 0, 158)
+sizeTitle.BackgroundTransparency = 1
+sizeTitle.Text = "Menu Size (Width / Height)"
+sizeTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
+sizeTitle.Font = Enum.Font.GothamSemibold
+sizeTitle.TextSize = 10
+sizeTitle.TextXAlignment = Enum.TextXAlignment.Left
+sizeTitle.Parent = miscContainer
 
+local wLabel = Instance.new("TextLabel")
+wLabel.Size = UDim2.new(0.46, -4, 0, 24)
+wLabel.Position = UDim2.new(0, 2, 0, 176)
+wLabel.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
+wLabel.BorderSizePixel = 0
+wLabel.Text = "W: " .. menuWidth
+wLabel.TextColor3 = Color3.new(1, 1, 1)
+wLabel.Font = Enum.Font.GothamBold
+wLabel.TextSize = 10
+wLabel.Parent = miscContainer
+Instance.new("UICorner", wLabel).CornerRadius = UDim.new(0, 6)
+
+local wMinusBtn = mkBtn(miscContainer, 176, 0.46, 2, 0.27, -3, "-W", Color3.fromRGB(40, 45, 58))
+local wPlusBtn = mkBtn(miscContainer, 176, 0.73, 2, 0.27, -6, "+W", Color3.fromRGB(40, 45, 58))
+
+local hLabel = Instance.new("TextLabel")
+hLabel.Size = UDim2.new(0.46, -4, 0, 24)
+hLabel.Position = UDim2.new(0, 2, 0, 204)
+hLabel.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
+hLabel.BorderSizePixel = 0
+hLabel.Text = "H: " .. menuHeight
+hLabel.TextColor3 = Color3.new(1, 1, 1)
+hLabel.Font = Enum.Font.GothamBold
+hLabel.TextSize = 10
+hLabel.Parent = miscContainer
+Instance.new("UICorner", hLabel).CornerRadius = UDim.new(0, 6)
+
+local hMinusBtn = mkBtn(miscContainer, 204, 0.46, 2, 0.27, -3, "-H", Color3.fromRGB(40, 45, 58))
+local hPlusBtn = mkBtn(miscContainer, 204, 0.73, 2, 0.27, -6, "+H", Color3.fromRGB(40, 45, 58))
+
+local resetSizeBtn = mkBtn(miscContainer, 232, 0, 2, 1, -6, "Reset Menu Size", Color3.fromRGB(45, 52, 68))
+
+-- Clipboard helper
 local function copyToClipboard(text)
 	local candidates = {
 		setclipboard,
@@ -351,6 +480,10 @@ ownerBtn.MouseButton1Click:Connect(function()
 	end)
 end)
 
+local function applyMenuSize()
+	f.Size = UDim2.new(0, menuWidth, 0, menuHeight)
+end
+
 local function applyMoveSpeed()
 	local char = lp.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -361,10 +494,14 @@ end
 
 local function refresh()
 	tabMainBtn.BackgroundColor3 = (currentTab == "Main") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
+	tabFarmBtn.BackgroundColor3 = (currentTab == "Farm") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
 	tabMiscBtn.BackgroundColor3 = (currentTab == "Misc") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
+
 	mainContainer.Visible = (currentTab == "Main")
+	farmContainer.Visible = (currentTab == "Farm")
 	miscContainer.Visible = (currentTab == "Misc")
 
+	-- Main
 	b1.Text = autoReconnect and "Auto-Reconnect: ON" or "Auto-Reconnect: OFF"
 	b1.BackgroundColor3 = autoReconnect and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(140, 55, 65)
 	b2.Text = sameServer and "Server: Same" or "Server: Random"
@@ -381,17 +518,32 @@ local function refresh()
 		tInfo.Text = "Timer: OFF (" .. timerHours .. "h)"
 	end
 
-	speedToggleBtn.Text = speedEnabled and "Movespeed: ON" or "Movespeed: OFF"
+	-- Farm
+	autoDigBtn.Text = autoDigEnabled and "Auto-Dig: ON" or "Auto-Dig: OFF"
+	autoDigBtn.BackgroundColor3 = autoDigEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
+
+	autoTokensBtn.Text = autoTokensEnabled and "Auto-Collect Tokens: ON" or "Auto-Collect Tokens: OFF"
+	autoTokensBtn.BackgroundColor3 = autoTokensEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
+
+	-- Misc
+	speedToggleBtn.Text = speedEnabled and "Speed: ON" or "Speed: OFF"
 	speedToggleBtn.BackgroundColor3 = speedEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
 	speedValBtn.Text = tostring(moveSpeed)
 
 	flyToggleBtn.Text = flyEnabled and "Fly: ON" or "Fly: OFF"
 	flyToggleBtn.BackgroundColor3 = flyEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
+
+	noclipToggleBtn.Text = noclipEnabled and "Noclip: ON" or "Noclip: OFF"
+	noclipToggleBtn.BackgroundColor3 = noclipEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
+
 	flyValBtn.Text = tostring(flySpeed)
 
 	mobToggleBtn.Text = mobileBtnVisible and "Show mobile button: ON" or "Show mobile button: OFF"
 	mobToggleBtn.BackgroundColor3 = mobileBtnVisible and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(55, 60, 75)
 	mobileBtn.Visible = mobileBtnVisible
+
+	wLabel.Text = "W: " .. menuWidth
+	hLabel.Text = "H: " .. menuHeight
 end
 
 refresh()
@@ -417,6 +569,11 @@ end
 -- Tab events
 tabMainBtn.MouseButton1Click:Connect(function()
 	currentTab = "Main"
+	refresh()
+end)
+
+tabFarmBtn.MouseButton1Click:Connect(function()
+	currentTab = "Farm"
 	refresh()
 end)
 
@@ -462,201 +619,5 @@ tPlus.MouseButton1Click:Connect(function()
 		timerHours += 1
 		elapsedSeconds = 0
 		refresh()
-	end
-end)
-
--- Misc events: WalkSpeed
-speedToggleBtn.MouseButton1Click:Connect(function()
-	speedEnabled = not speedEnabled
-	applyMoveSpeed()
-	refresh()
-end)
-
-speedMinusBtn.MouseButton1Click:Connect(function()
-	moveSpeed = math.clamp(moveSpeed - 5, 1, 100)
-	if speedEnabled then
-		applyMoveSpeed()
-	end
-	refresh()
-end)
-
-speedPlusBtn.MouseButton1Click:Connect(function()
-	moveSpeed = math.clamp(moveSpeed + 5, 1, 100)
-	if speedEnabled then
-		applyMoveSpeed()
-	end
-	refresh()
-end)
-
-local walkPresets = { 16, 35, 50, 75, 100 }
-local walkIdx = 2
-speedValBtn.MouseButton1Click:Connect(function()
-	walkIdx = (walkIdx % #walkPresets) + 1
-	moveSpeed = walkPresets[walkIdx]
-	if speedEnabled then
-		applyMoveSpeed()
-	end
-	refresh()
-end)
-
--- Misc events: Fly
-flyToggleBtn.MouseButton1Click:Connect(function()
-	flyEnabled = not flyEnabled
-	if flyEnabled then
-		startFly()
-	else
-		stopFly()
-	end
-	refresh()
-end)
-
-flyMinusBtn.MouseButton1Click:Connect(function()
-	flySpeed = math.clamp(flySpeed - 5, 1, 150)
-	refresh()
-end)
-
-flyPlusBtn.MouseButton1Click:Connect(function()
-	flySpeed = math.clamp(flySpeed + 5, 1, 150)
-	refresh()
-end)
-
-local flyPresets = { 25, 50, 80, 110, 150 }
-local flyIdx = 2
-flyValBtn.MouseButton1Click:Connect(function()
-	flyIdx = (flyIdx % #flyPresets) + 1
-	flySpeed = flyPresets[flyIdx]
-	refresh()
-end)
-
--- Misc events: Mobile button
-mobToggleBtn.MouseButton1Click:Connect(function()
-	mobileBtnVisible = not mobileBtnVisible
-	if not mobileBtnVisible then
-		f.Visible = true
-	end
-	refresh()
-end)
-
--- Helper for draggable UI objects
-local function makeDraggable(handle, target)
-	local dragging, dragStart, startPos
-	handle.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			dragStart = input.Position
-			startPos = target.Position
-		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-			local d = input.Position - dragStart
-			target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
-		end
-	end)
-end
-
-makeDraggable(top, f)
-makeDraggable(verLabel, f)
-makeDraggable(mobileBtn, mobileBtn)
-
--- Fly movement loop (supports mobile thumbstick + camera direction)
-RunService.RenderStepped:Connect(function()
-	if not flyEnabled then
-		return
-	end
-	local char = lp.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	local cam = workspace.CurrentCamera
-	if not root or not hum or not cam then
-		return
-	end
-
-	if not flyBV or not flyBV.Parent or not flyBG or not flyBG.Parent then
-		startFly()
-		return
-	end
-
-	hum.PlatformStand = true
-	flyBG.CFrame = cam.CFrame
-
-	local moveDir = hum.MoveDirection
-	local velocity = Vector3.zero
-
-	if moveDir.Magnitude > 0 then
-		local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
-		local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
-		if flatLook.Magnitude > 0.001 then
-			flatLook = flatLook.Unit
-		end
-		if flatRight.Magnitude > 0.001 then
-			flatRight = flatRight.Unit
-		end
-
-		local forwardAmount = moveDir:Dot(flatLook)
-		local rightAmount = moveDir:Dot(flatRight)
-		local flyVec = (cam.CFrame.LookVector * forwardAmount) + (cam.CFrame.RightVector * rightAmount)
-		if flyVec.Magnitude > 0.001 then
-			velocity = flyVec.Unit * flySpeed
-		end
-	end
-
-	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-		velocity += Vector3.new(0, flySpeed, 0)
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-		velocity -= Vector3.new(0, flySpeed, 0)
-	end
-
-	flyBV.Velocity = velocity
-end)
-
--- Respawn handler
-lp.CharacterAdded:Connect(function()
-	task.wait(0.5)
-	if speedEnabled then
-		applyMoveSpeed()
-	end
-	if flyEnabled then
-		startFly()
-	end
-end)
-
--- Main background loop
-task.spawn(function()
-	while task.wait(1) do
-		if speedEnabled then
-			pcall(function()
-				local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-				if hum and hum.WalkSpeed ~= moveSpeed then
-					hum.WalkSpeed = moveSpeed
-				end
-			end)
-		end
-
-		if autoReconnect and not isRejoining then
-			pcall(function()
-				local o = CoreGui:FindFirstChild("RobloxPromptGui") and CoreGui.RobloxPromptGui:FindFirstChild("promptOverlay")
-				if o and o:FindFirstChild("ErrorPrompt") then
-					rejoin(false)
-				end
-			end)
-		end
-
-		if timerEnabled and not isRejoining then
-			elapsedSeconds += 1
-			if elapsedSeconds >= timerHours * 3600 then
-				elapsedSeconds = 0
-				refresh()
-				rejoin(true)
-			else
-				refresh()
-			end
-		end
 	end
 end)
