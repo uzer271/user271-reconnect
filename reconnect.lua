@@ -5,6 +5,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
 local PLACE_ID = 1537690962
+local OWNER_HANDLE = "@uze9r"
 local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
 
@@ -26,6 +27,7 @@ local flyEnabled = false
 local flySpeed = 50
 local mobileBtnVisible = false
 local currentTab = "Main"
+local copyResetToken = 0
 
 local flyBV = nil
 local flyBG = nil
@@ -38,7 +40,7 @@ sg.Parent = pg
 
 local f = Instance.new("Frame")
 f.Name = "MainFrame"
-f.Size = UDim2.new(0, 232, 0, 310)
+f.Size = UDim2.new(0, 232, 0, 334)
 f.Position = UDim2.new(0.5, -116, 0.2, 0)
 f.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
 f.BorderSizePixel = 0
@@ -46,8 +48,14 @@ f.Active = true
 f.Parent = sg
 Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
 
+local frameStroke = Instance.new("UIStroke")
+frameStroke.Color = Color3.fromRGB(255, 255, 255)
+frameStroke.Thickness = 2.2
+frameStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+frameStroke.Parent = f
+
 local top = Instance.new("TextLabel")
-top.Size = UDim2.new(1, -30, 0, 28)
+top.Size = UDim2.new(1, -68, 0, 28)
 top.Position = UDim2.new(0, 8, 0, 0)
 top.BackgroundTransparency = 1
 top.Text = "@uze9r reconnect"
@@ -57,6 +65,18 @@ top.TextSize = 12
 top.TextXAlignment = Enum.TextXAlignment.Left
 top.Active = true
 top.Parent = f
+
+local verLabel = Instance.new("TextLabel")
+verLabel.Size = UDim2.new(0, 34, 0, 28)
+verLabel.Position = UDim2.new(1, -60, 0, 0)
+verLabel.BackgroundTransparency = 1
+verLabel.Text = "0.9V"
+verLabel.TextColor3 = Color3.fromRGB(165, 175, 195)
+verLabel.Font = Enum.Font.GothamBold
+verLabel.TextSize = 11
+verLabel.TextXAlignment = Enum.TextXAlignment.Right
+verLabel.Active = true
+verLabel.Parent = f
 
 local x = Instance.new("TextButton")
 x.Size = UDim2.new(0, 20, 0, 20)
@@ -165,17 +185,30 @@ local tabMainBtn = mkTab(8, "Main")
 local tabMiscBtn = mkTab(119, "Misc")
 
 local mainContainer = Instance.new("Frame")
-mainContainer.Size = UDim2.new(1, 0, 1, -56)
+mainContainer.Size = UDim2.new(1, 0, 1, -80)
 mainContainer.Position = UDim2.new(0, 0, 0, 56)
 mainContainer.BackgroundTransparency = 1
 mainContainer.Parent = f
 
 local miscContainer = Instance.new("Frame")
-miscContainer.Size = UDim2.new(1, 0, 1, -56)
+miscContainer.Size = UDim2.new(1, 0, 1, -80)
 miscContainer.Position = UDim2.new(0, 0, 0, 56)
 miscContainer.BackgroundTransparency = 1
 miscContainer.Visible = false
 miscContainer.Parent = f
+
+local ownerBtn = Instance.new("TextButton")
+ownerBtn.Name = "OwnerBtn"
+ownerBtn.Size = UDim2.new(1, -16, 0, 20)
+ownerBtn.Position = UDim2.new(0, 8, 1, -24)
+ownerBtn.BackgroundTransparency = 1
+ownerBtn.BorderSizePixel = 0
+ownerBtn.Text = "Owner: " .. OWNER_HANDLE
+ownerBtn.TextColor3 = Color3.fromRGB(165, 175, 195)
+ownerBtn.Font = Enum.Font.GothamSemibold
+ownerBtn.TextSize = 11
+ownerBtn.TextXAlignment = Enum.TextXAlignment.Left
+ownerBtn.Parent = f
 
 local function mkBtn(parent, y, xPos, w, txt, col)
 	local b = Instance.new("TextButton")
@@ -283,6 +316,40 @@ miscHint.TextSize = 10
 miscHint.TextWrapped = true
 miscHint.TextXAlignment = Enum.TextXAlignment.Left
 miscHint.Parent = miscContainer
+
+local function copyToClipboard(text)
+	local candidates = {
+		setclipboard,
+		toclipboard,
+		toClipboard,
+		syn and syn.write_clipboard,
+		syn and syn.setclipboard,
+		Clipboard and Clipboard.set
+	}
+	for _, fn in ipairs(candidates) do
+		if type(fn) == "function" then
+			local ok = pcall(fn, text)
+			if ok then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+ownerBtn.MouseButton1Click:Connect(function()
+	copyToClipboard(OWNER_HANDLE)
+	copyResetToken += 1
+	local currentToken = copyResetToken
+	ownerBtn.Text = "Username copied"
+	ownerBtn.TextColor3 = Color3.fromRGB(140, 220, 160)
+	task.delay(1.5, function()
+		if copyResetToken == currentToken and ownerBtn and ownerBtn.Parent then
+			ownerBtn.Text = "Owner: " .. OWNER_HANDLE
+			ownerBtn.TextColor3 = Color3.fromRGB(165, 175, 195)
+		end
+	end)
+end)
 
 local function applyMoveSpeed()
 	local char = lp.Character
@@ -494,6 +561,7 @@ local function makeDraggable(handle, target)
 end
 
 makeDraggable(top, f)
+makeDraggable(verLabel, f)
 makeDraggable(mobileBtn, mobileBtn)
 
 -- Fly movement loop (supports mobile thumbstick + camera direction)
@@ -521,7 +589,6 @@ RunService.RenderStepped:Connect(function()
 	local velocity = Vector3.zero
 
 	if moveDir.Magnitude > 0 then
-		-- Convert flat thumbstick direction into full 3D camera direction (so looking up/down flies up/down)
 		local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
 		local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
 		if flatLook.Magnitude > 0.001 then
