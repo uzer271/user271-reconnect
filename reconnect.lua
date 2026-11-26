@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
 local PLACE_ID = 1537690962
 local lp = Players.LocalPlayer
@@ -21,8 +22,13 @@ local isRejoining = false
 
 local speedEnabled = false
 local moveSpeed = 35
+local flyEnabled = false
+local flySpeed = 50
 local mobileBtnVisible = false
 local currentTab = "Main"
+
+local flyBV = nil
+local flyBG = nil
 
 local sg = Instance.new("ScreenGui")
 sg.Name = "Uze9rReconnectGui"
@@ -32,7 +38,7 @@ sg.Parent = pg
 
 local f = Instance.new("Frame")
 f.Name = "MainFrame"
-f.Size = UDim2.new(0, 232, 0, 252)
+f.Size = UDim2.new(0, 232, 0, 310)
 f.Position = UDim2.new(0.5, -116, 0.2, 0)
 f.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
 f.BorderSizePixel = 0
@@ -64,10 +70,10 @@ x.TextSize = 14
 x.Parent = f
 Instance.new("UICorner", x).CornerRadius = UDim.new(0, 5)
 
--- Mobile floating toggle button ("Natro reconnect")
+-- Mobile floating toggle button ("Natro reconnect") with bold white stroke
 local mobileBtn = Instance.new("TextButton")
 mobileBtn.Name = "NatroMobileBtn"
-mobileBtn.Size = UDim2.new(0, 114, 0, 30)
+mobileBtn.Size = UDim2.new(0, 118, 0, 32)
 mobileBtn.Position = UDim2.new(0.05, 0, 0.15, 0)
 mobileBtn.BackgroundColor3 = Color3.fromRGB(28, 31, 40)
 mobileBtn.BorderSizePixel = 0
@@ -80,10 +86,57 @@ mobileBtn.Active = true
 mobileBtn.Parent = sg
 Instance.new("UICorner", mobileBtn).CornerRadius = UDim.new(0, 8)
 
+local mobileStroke = Instance.new("UIStroke")
+mobileStroke.Color = Color3.fromRGB(255, 255, 255)
+mobileStroke.Thickness = 2.2
+mobileStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+mobileStroke.Parent = mobileBtn
+
+local function stopFly()
+	if flyBV then
+		flyBV:Destroy()
+		flyBV = nil
+	end
+	if flyBG then
+		flyBG:Destroy()
+		flyBG = nil
+	end
+	local char = lp.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.PlatformStand = false
+	end
+end
+
+local function startFly()
+	stopFly()
+	local char = lp.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum then
+		return
+	end
+
+	hum.PlatformStand = true
+
+	flyBG = Instance.new("BodyGyro")
+	flyBG.P = 9e4
+	flyBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+	flyBG.CFrame = root.CFrame
+	flyBG.Parent = root
+
+	flyBV = Instance.new("BodyVelocity")
+	flyBV.Velocity = Vector3.zero
+	flyBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+	flyBV.Parent = root
+end
+
 x.MouseButton1Click:Connect(function()
 	if mobileBtnVisible then
 		f.Visible = false
 	else
+		flyEnabled = false
+		stopFly()
 		sg:Destroy()
 	end
 end)
@@ -194,21 +247,36 @@ speedTitle.TextSize = 11
 speedTitle.TextXAlignment = Enum.TextXAlignment.Left
 speedTitle.Parent = miscContainer
 
-local speedToggleBtn = mkBtn(miscContainer, 22, 8, 118, "Movespeed: OFF", Color3.fromRGB(55, 60, 75))
-local speedMinusBtn = mkBtn(miscContainer, 22, 130, 26, "-", Color3.fromRGB(40, 45, 58))
-
-local speedValBtn = mkBtn(miscContainer, 22, 160, 40, tostring(moveSpeed), Color3.fromRGB(32, 35, 44))
+local speedToggleBtn = mkBtn(miscContainer, 20, 8, 118, "Movespeed: OFF", Color3.fromRGB(55, 60, 75))
+local speedMinusBtn = mkBtn(miscContainer, 20, 130, 26, "-", Color3.fromRGB(40, 45, 58))
+local speedValBtn = mkBtn(miscContainer, 20, 160, 40, tostring(moveSpeed), Color3.fromRGB(32, 35, 44))
 speedValBtn.Font = Enum.Font.GothamBold
+local speedPlusBtn = mkBtn(miscContainer, 20, 204, 26, "+", Color3.fromRGB(40, 45, 58))
 
-local speedPlusBtn = mkBtn(miscContainer, 22, 204, 26, "+", Color3.fromRGB(40, 45, 58))
+local flyTitle = Instance.new("TextLabel")
+flyTitle.Size = UDim2.new(1, -16, 0, 18)
+flyTitle.Position = UDim2.new(0, 8, 0, 52)
+flyTitle.BackgroundTransparency = 1
+flyTitle.Text = "Fly & Fly movespeed (1 - 150)"
+flyTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
+flyTitle.Font = Enum.Font.GothamSemibold
+flyTitle.TextSize = 11
+flyTitle.TextXAlignment = Enum.TextXAlignment.Left
+flyTitle.Parent = miscContainer
 
-local mobToggleBtn = mkBtn(miscContainer, 56, 8, 216, "Show mobile button: OFF", Color3.fromRGB(55, 60, 75))
+local flyToggleBtn = mkBtn(miscContainer, 72, 8, 118, "Fly: OFF", Color3.fromRGB(55, 60, 75))
+local flyMinusBtn = mkBtn(miscContainer, 72, 130, 26, "-", Color3.fromRGB(40, 45, 58))
+local flyValBtn = mkBtn(miscContainer, 72, 160, 40, tostring(flySpeed), Color3.fromRGB(32, 35, 44))
+flyValBtn.Font = Enum.Font.GothamBold
+local flyPlusBtn = mkBtn(miscContainer, 72, 204, 26, "+", Color3.fromRGB(40, 45, 58))
+
+local mobToggleBtn = mkBtn(miscContainer, 108, 8, 216, "Show mobile button: OFF", Color3.fromRGB(55, 60, 75))
 
 local miscHint = Instance.new("TextLabel")
-miscHint.Size = UDim2.new(1, -16, 0, 28)
-miscHint.Position = UDim2.new(0, 8, 0, 88)
+miscHint.Size = UDim2.new(1, -16, 0, 32)
+miscHint.Position = UDim2.new(0, 8, 0, 140)
 miscHint.BackgroundTransparency = 1
-miscHint.Text = "Tap speed value for quick presets (16/35/50/75/100)"
+miscHint.Text = "Fly uses camera direction + joystick. Tap numbers for quick presets."
 miscHint.TextColor3 = Color3.fromRGB(150, 158, 175)
 miscHint.Font = Enum.Font.Gotham
 miscHint.TextSize = 10
@@ -220,22 +288,16 @@ local function applyMoveSpeed()
 	local char = lp.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if hum then
-		if speedEnabled then
-			hum.WalkSpeed = moveSpeed
-		else
-			hum.WalkSpeed = 16
-		end
+		hum.WalkSpeed = speedEnabled and moveSpeed or 16
 	end
 end
 
 local function refresh()
-	-- Tabs styling
 	tabMainBtn.BackgroundColor3 = (currentTab == "Main") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
 	tabMiscBtn.BackgroundColor3 = (currentTab == "Misc") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
 	mainContainer.Visible = (currentTab == "Main")
 	miscContainer.Visible = (currentTab == "Misc")
 
-	-- Main tab UI
 	b1.Text = autoReconnect and "Auto-Reconnect: ON" or "Auto-Reconnect: OFF"
 	b1.BackgroundColor3 = autoReconnect and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(140, 55, 65)
 	b2.Text = sameServer and "Server: Same" or "Server: Random"
@@ -252,10 +314,13 @@ local function refresh()
 		tInfo.Text = "Timer: OFF (" .. timerHours .. "h)"
 	end
 
-	-- Misc tab UI
 	speedToggleBtn.Text = speedEnabled and "Movespeed: ON" or "Movespeed: OFF"
 	speedToggleBtn.BackgroundColor3 = speedEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
 	speedValBtn.Text = tostring(moveSpeed)
+
+	flyToggleBtn.Text = flyEnabled and "Fly: ON" or "Fly: OFF"
+	flyToggleBtn.BackgroundColor3 = flyEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
+	flyValBtn.Text = tostring(flySpeed)
 
 	mobToggleBtn.Text = mobileBtnVisible and "Show mobile button: ON" or "Show mobile button: OFF"
 	mobToggleBtn.BackgroundColor3 = mobileBtnVisible and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(55, 60, 75)
@@ -333,7 +398,7 @@ tPlus.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Misc events
+-- Misc events: WalkSpeed
 speedToggleBtn.MouseButton1Click:Connect(function()
 	speedEnabled = not speedEnabled
 	applyMoveSpeed()
@@ -356,17 +421,47 @@ speedPlusBtn.MouseButton1Click:Connect(function()
 	refresh()
 end)
 
-local presets = { 16, 35, 50, 75, 100 }
-local presetIdx = 2
+local walkPresets = { 16, 35, 50, 75, 100 }
+local walkIdx = 2
 speedValBtn.MouseButton1Click:Connect(function()
-	presetIdx = (presetIdx % #presets) + 1
-	moveSpeed = presets[presetIdx]
+	walkIdx = (walkIdx % #walkPresets) + 1
+	moveSpeed = walkPresets[walkIdx]
 	if speedEnabled then
 		applyMoveSpeed()
 	end
 	refresh()
 end)
 
+-- Misc events: Fly
+flyToggleBtn.MouseButton1Click:Connect(function()
+	flyEnabled = not flyEnabled
+	if flyEnabled then
+		startFly()
+	else
+		stopFly()
+	end
+	refresh()
+end)
+
+flyMinusBtn.MouseButton1Click:Connect(function()
+	flySpeed = math.clamp(flySpeed - 5, 1, 150)
+	refresh()
+end)
+
+flyPlusBtn.MouseButton1Click:Connect(function()
+	flySpeed = math.clamp(flySpeed + 5, 1, 150)
+	refresh()
+end)
+
+local flyPresets = { 25, 50, 80, 110, 150 }
+local flyIdx = 2
+flyValBtn.MouseButton1Click:Connect(function()
+	flyIdx = (flyIdx % #flyPresets) + 1
+	flySpeed = flyPresets[flyIdx]
+	refresh()
+end)
+
+-- Misc events: Mobile button
 mobToggleBtn.MouseButton1Click:Connect(function()
 	mobileBtnVisible = not mobileBtnVisible
 	if not mobileBtnVisible then
@@ -401,14 +496,71 @@ end
 makeDraggable(top, f)
 makeDraggable(mobileBtn, mobileBtn)
 
--- Keep speed applied on respawn & main loop
+-- Fly movement loop (supports mobile thumbstick + camera direction)
+RunService.RenderStepped:Connect(function()
+	if not flyEnabled then
+		return
+	end
+	local char = lp.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local cam = workspace.CurrentCamera
+	if not root or not hum or not cam then
+		return
+	end
+
+	if not flyBV or not flyBV.Parent or not flyBG or not flyBG.Parent then
+		startFly()
+		return
+	end
+
+	hum.PlatformStand = true
+	flyBG.CFrame = cam.CFrame
+
+	local moveDir = hum.MoveDirection
+	local velocity = Vector3.zero
+
+	if moveDir.Magnitude > 0 then
+		-- Convert flat thumbstick direction into full 3D camera direction (so looking up/down flies up/down)
+		local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+		local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
+		if flatLook.Magnitude > 0.001 then
+			flatLook = flatLook.Unit
+		end
+		if flatRight.Magnitude > 0.001 then
+			flatRight = flatRight.Unit
+		end
+
+		local forwardAmount = moveDir:Dot(flatLook)
+		local rightAmount = moveDir:Dot(flatRight)
+		local flyVec = (cam.CFrame.LookVector * forwardAmount) + (cam.CFrame.RightVector * rightAmount)
+		if flyVec.Magnitude > 0.001 then
+			velocity = flyVec.Unit * flySpeed
+		end
+	end
+
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+		velocity += Vector3.new(0, flySpeed, 0)
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+		velocity -= Vector3.new(0, flySpeed, 0)
+	end
+
+	flyBV.Velocity = velocity
+end)
+
+-- Respawn handler
 lp.CharacterAdded:Connect(function()
 	task.wait(0.5)
 	if speedEnabled then
 		applyMoveSpeed()
 	end
+	if flyEnabled then
+		startFly()
+	end
 end)
 
+-- Main background loop
 task.spawn(function()
 	while task.wait(1) do
 		if speedEnabled then
