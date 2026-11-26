@@ -1,8 +1,14 @@
-local P, T, C, U, L = 1537690962, game:GetService("TeleportService"), game:GetService("CoreGui"), game:GetService("UserInputService"), game:GetService("Players").LocalPlayer
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 
+local PLACE_ID = 1537690962
 local CFG_FILE = "uze9r_reconnect_cfg.json"
 local SCRIPT_URL = "https://raw.githubusercontent.com/uzer271/user271-reconnect/refs/heads/main/reconnect.lua"
+
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 local Config = {
 	AutoReconnect = true,
@@ -15,33 +21,39 @@ local Config = {
 	PosYOffset = 0
 }
 
-local function canFS()
+local function hasFS()
 	return type(isfile) == "function" and type(readfile) == "function" and type(writefile) == "function"
 end
 
 local function loadConfig()
-	if not canFS() then return end
-	pcall(function()
+	if not hasFS() then return end
+	local ok, raw = pcall(function()
 		if isfile(CFG_FILE) then
-			local decoded = HttpService:JSONDecode(readfile(CFG_FILE))
-			if type(decoded) == "table" then
-				if type(decoded.AutoReconnect) == "boolean" then Config.AutoReconnect = decoded.AutoReconnect end
-				if type(decoded.SameServer) == "boolean" then Config.SameServer = decoded.SameServer end
-				if type(decoded.TimerEnabled) == "boolean" then Config.TimerEnabled = decoded.TimerEnabled end
-				if type(decoded.TimerHours) == "number" then
-					Config.TimerHours = math.clamp(math.floor(decoded.TimerHours), 1, 24)
-				end
-				if type(decoded.PosXScale) == "number" then Config.PosXScale = decoded.PosXScale end
-				if type(decoded.PosXOffset) == "number" then Config.PosXOffset = decoded.PosXOffset end
-				if type(decoded.PosYScale) == "number" then Config.PosYScale = decoded.PosYScale end
-				if type(decoded.PosYOffset) == "number" then Config.PosYOffset = decoded.PosYOffset end
-			end
+			return readfile(CFG_FILE)
 		end
+		return nil
 	end)
+	if not ok or type(raw) ~= "string" then return end
+
+	local decodedOk, data = pcall(function()
+		return HttpService:JSONDecode(raw)
+	end)
+	if not decodedOk or type(data) ~= "table" then return end
+
+	if type(data.AutoReconnect) == "boolean" then Config.AutoReconnect = data.AutoReconnect end
+	if type(data.SameServer) == "boolean" then Config.SameServer = data.SameServer end
+	if type(data.TimerEnabled) == "boolean" then Config.TimerEnabled = data.TimerEnabled end
+	if type(data.TimerHours) == "number" then
+		Config.TimerHours = math.clamp(math.floor(data.TimerHours), 1, 24)
+	end
+	if type(data.PosXScale) == "number" then Config.PosXScale = data.PosXScale end
+	if type(data.PosXOffset) == "number" then Config.PosXOffset = data.PosXOffset end
+	if type(data.PosYScale) == "number" then Config.PosYScale = data.PosYScale end
+	if type(data.PosYOffset) == "number" then Config.PosYOffset = data.PosYOffset end
 end
 
 local function saveConfig()
-	if not canFS() then return end
+	if not hasFS() then return end
 	pcall(function()
 		writefile(CFG_FILE, HttpService:JSONEncode(Config))
 	end)
@@ -49,133 +61,184 @@ end
 
 loadConfig()
 
-local R = false
-local elapsed = 0
+local isRejoining = false
+local elapsedSeconds = 0
 
-local g = (gethui and gethui()) or C
-if g:FindFirstChild("U271") then g.U271:Destroy() end
-
-local sg = Instance.new("ScreenGui", g)
-sg.Name = "U271"
-sg.ResetOnSpawn = false
-
-local f = Instance.new("Frame", sg)
-f.Size = UDim2.new(0, 232, 0, 224)
-f.Position = UDim2.new(Config.PosXScale, Config.PosXOffset, Config.PosYScale, Config.PosYOffset)
-f.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
-f.BorderSizePixel = 0
-f.Active = true
-Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
-
-local top = Instance.new("TextLabel", f)
-top.Size = UDim2.new(1, -30, 0, 28)
-top.Position = UDim2.new(0, 8, 0, 0)
-top.BackgroundTransparency = 1
-top.Text = "@uze9r reconnect"
-top.TextColor3 = Color3.new(1, 1, 1)
-top.Font = Enum.Font.GothamBold
-top.TextSize = 12
-top.TextXAlignment = Enum.TextXAlignment.Left
-top.Active = true
-
-local x = Instance.new("TextButton", f)
-x.Size = UDim2.new(0, 20, 0, 20)
-x.Position = UDim2.new(1, -24, 0, 4)
-x.BackgroundColor3 = Color3.fromRGB(170, 55, 65)
-x.Text = "×"
-x.TextColor3 = Color3.new(1, 1, 1)
-x.Font = Enum.Font.GothamBold
-Instance.new("UICorner", x).CornerRadius = UDim.new(0, 5)
-x.MouseButton1Click:Connect(function() sg:Destroy() end)
-
-local st = Instance.new("TextLabel", f)
-st.Size = UDim2.new(1, -16, 0, 18)
-st.Position = UDim2.new(0, 8, 0, 28)
-st.BackgroundTransparency = 1
-st.Text = Config.AutoReconnect and "Status: Active" or "Status: Disabled"
-st.TextColor3 = Config.AutoReconnect and Color3.fromRGB(140, 220, 160) or Color3.fromRGB(235, 130, 135)
-st.Font = Enum.Font.Gotham
-st.TextSize = 11
-st.TextXAlignment = Enum.TextXAlignment.Left
-
-local function mk(y, txt, col, w, xPos)
-	local b = Instance.new("TextButton", f)
-	b.Size = w or UDim2.new(1, -16, 0, 26)
-	b.Position = UDim2.new(0, xPos or 8, 0, y)
-	b.BackgroundColor3 = col
-	b.Text = txt
-	b.TextColor3 = Color3.new(1, 1, 1)
-	b.Font = Enum.Font.GothamSemibold
-	b.TextSize = 11
-	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-	return b
+local function getGuiParent()
+	local ok, hui = pcall(function()
+		return type(gethui) == "function" and gethui() or nil
+	end)
+	if ok and typeof(hui) == "Instance" then
+		return hui
+	end
+	return CoreGui
 end
 
-local b1 = mk(49, "", Color3.fromRGB(45, 140, 80))
-local b2 = mk(79, "", Color3.fromRGB(40, 45, 58))
-local b3 = mk(109, "Test Error", Color3.fromRGB(175, 105, 35))
+local parentGui = getGuiParent()
+local existing = parentGui:FindFirstChild("Uze9rReconnectGui")
+if existing then
+	existing:Destroy()
+end
 
-local tToggle = mk(139, "", Color3.fromRGB(55, 60, 75), UDim2.new(0, 118, 0, 26), 8)
-local tMinus = mk(139, "-", Color3.fromRGB(40, 45, 58), UDim2.new(0, 26, 0, 26), 130)
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "Uze9rReconnectGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = parentGui
 
-local tVal = Instance.new("TextLabel", f)
-tVal.Size = UDim2.new(0, 40, 0, 26)
-tVal.Position = UDim2.new(0, 160, 0, 139)
-tVal.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
-tVal.Text = Config.TimerHours .. "h"
-tVal.TextColor3 = Color3.new(1, 1, 1)
-tVal.Font = Enum.Font.GothamBold
-tVal.TextSize = 11
-Instance.new("UICorner", tVal).CornerRadius = UDim.new(0, 6)
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 232, 0, 224)
+mainFrame.Position = UDim2.new(Config.PosXScale, Config.PosXOffset, Config.PosYScale, Config.PosYOffset)
+mainFrame.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = screenGui
 
-local tPlus = mk(139, "+", Color3.fromRGB(40, 45, 58), UDim2.new(0, 26, 0, 26), 204)
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 8)
+mainCorner.Parent = mainFrame
 
-local tInfo = Instance.new("TextLabel", f)
-tInfo.Size = UDim2.new(1, -16, 0, 16)
-tInfo.Position = UDim2.new(0, 8, 0, 169)
-tInfo.BackgroundTransparency = 1
-tInfo.Text = ""
-tInfo.TextColor3 = Color3.fromRGB(175, 182, 198)
-tInfo.Font = Enum.Font.Gotham
-tInfo.TextSize = 10
-tInfo.TextXAlignment = Enum.TextXAlignment.Left
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, -30, 0, 28)
+titleLabel.Position = UDim2.new(0, 8, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "@uze9r reconnect"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 12
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Active = true
+titleLabel.Parent = mainFrame
 
-local function fmtTime(sec)
-	sec = math.max(0, math.floor(sec))
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "CloseBtn"
+closeBtn.Size = UDim2.new(0, 20, 0, 20)
+closeBtn.Position = UDim2.new(1, -24, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(170, 55, 65)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "×"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.Parent = mainFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 5)
+closeCorner.Parent = closeBtn
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Name = "Status"
+statusLabel.Size = UDim2.new(1, -16, 0, 18)
+statusLabel.Position = UDim2.new(0, 8, 0, 28)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Status: Active"
+statusLabel.TextColor3 = Color3.fromRGB(140, 220, 160)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 11
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = mainFrame
+
+local function createButton(name, yPos, xPos, width, height, text, bgColor)
+	local btn = Instance.new("TextButton")
+	btn.Name = name
+	btn.Size = UDim2.new(0, width, 0, height)
+	btn.Position = UDim2.new(0, xPos, 0, yPos)
+	btn.BackgroundColor3 = bgColor
+	btn.BorderSizePixel = 0
+	btn.Text = text
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Font = Enum.Font.GothamSemibold
+	btn.TextSize = 11
+	btn.Parent = mainFrame
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = btn
+	return btn
+end
+
+local autoBtn = createButton("AutoBtn", 49, 8, 216, 26, "", Color3.fromRGB(45, 140, 80))
+local serverBtn = createButton("ServerBtn", 79, 8, 216, 26, "", Color3.fromRGB(40, 45, 58))
+local testErrBtn = createButton("TestErrBtn", 109, 8, 216, 26, "Test Error", Color3.fromRGB(175, 105, 35))
+
+local timerToggleBtn = createButton("TimerToggleBtn", 139, 8, 118, 26, "", Color3.fromRGB(55, 60, 75))
+local timerMinusBtn = createButton("TimerMinusBtn", 139, 130, 26, 26, "-", Color3.fromRGB(40, 45, 58))
+
+local timerHoursLabel = Instance.new("TextLabel")
+timerHoursLabel.Name = "TimerHours"
+timerHoursLabel.Size = UDim2.new(0, 40, 0, 26)
+timerHoursLabel.Position = UDim2.new(0, 160, 0, 139)
+timerHoursLabel.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
+timerHoursLabel.BorderSizePixel = 0
+timerHoursLabel.Text = tostring(Config.TimerHours) .. "h"
+timerHoursLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+timerHoursLabel.Font = Enum.Font.GothamBold
+timerHoursLabel.TextSize = 11
+timerHoursLabel.Parent = mainFrame
+
+local hoursCorner = Instance.new("UICorner")
+hoursCorner.CornerRadius = UDim.new(0, 6)
+hoursCorner.Parent = timerHoursLabel
+
+local timerPlusBtn = createButton("TimerPlusBtn", 139, 204, 26, 26, "+", Color3.fromRGB(40, 45, 58))
+
+local timerInfoLabel = Instance.new("TextLabel")
+timerInfoLabel.Name = "TimerInfo"
+timerInfoLabel.Size = UDim2.new(1, -16, 0, 16)
+timerInfoLabel.Position = UDim2.new(0, 8, 0, 169)
+timerInfoLabel.BackgroundTransparency = 1
+timerInfoLabel.Text = ""
+timerInfoLabel.TextColor3 = Color3.fromRGB(175, 182, 198)
+timerInfoLabel.Font = Enum.Font.Gotham
+timerInfoLabel.TextSize = 10
+timerInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+timerInfoLabel.Parent = mainFrame
+
+local function formatHMS(totalSec)
+	local sec = math.max(0, math.floor(totalSec))
 	local h = math.floor(sec / 3600)
 	local m = math.floor((sec % 3600) / 60)
 	local s = sec % 60
 	return string.format("%02d:%02d:%02d", h, m, s)
 end
 
-local function refreshTimerUI()
-	tVal.Text = Config.TimerHours .. "h"
+local function updateTimerUI()
+	timerHoursLabel.Text = tostring(Config.TimerHours) .. "h"
 	if Config.TimerEnabled then
-		tToggle.Text = "Timer: ON"
-		tToggle.BackgroundColor3 = Color3.fromRGB(52, 115, 195)
-		local left = math.max(0, Config.TimerHours * 3600 - elapsed)
-		tInfo.Text = "Next rejoin in: " .. fmtTime(left)
+		timerToggleBtn.Text = "Timer: ON"
+		timerToggleBtn.BackgroundColor3 = Color3.fromRGB(52, 115, 195)
+		local remaining = math.max(0, Config.TimerHours * 3600 - elapsedSeconds)
+		timerInfoLabel.Text = "Next rejoin in: " .. formatHMS(remaining)
 	else
-		tToggle.Text = "Timer: OFF"
-		tToggle.BackgroundColor3 = Color3.fromRGB(55, 60, 75)
-		tInfo.Text = "Timer: OFF (" .. Config.TimerHours .. "h)"
+		timerToggleBtn.Text = "Timer: OFF"
+		timerToggleBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 75)
+		timerInfoLabel.Text = "Timer: OFF (" .. tostring(Config.TimerHours) .. "h)"
 	end
 end
 
-local function refreshMainUI()
-	b1.Text = Config.AutoReconnect and "Auto-Reconnect: ON" or "Auto-Reconnect: OFF"
-	b1.BackgroundColor3 = Config.AutoReconnect and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(140, 55, 65)
-	b2.Text = Config.SameServer and "Server: Same" or "Server: Random"
-	if not R then
-		st.Text = Config.AutoReconnect and "Status: Active" or "Status: Disabled"
-		st.TextColor3 = Config.AutoReconnect and Color3.fromRGB(140, 220, 160) or Color3.fromRGB(235, 130, 135)
+local function updateMainUI()
+	autoBtn.Text = Config.AutoReconnect and "Auto-Reconnect: ON" or "Auto-Reconnect: OFF"
+	autoBtn.BackgroundColor3 = Config.AutoReconnect and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(140, 55, 65)
+	serverBtn.Text = Config.SameServer and "Server: Same" or "Server: Random"
+
+	if not isRejoining then
+		if Config.AutoReconnect then
+			statusLabel.Text = "Status: Active"
+			statusLabel.TextColor3 = Color3.fromRGB(140, 220, 160)
+		else
+			statusLabel.Text = "Status: Disabled"
+			statusLabel.TextColor3 = Color3.fromRGB(235, 130, 135)
+		end
 	end
-	refreshTimerUI()
+
+	updateTimerUI()
 end
 
-refreshMainUI()
+updateMainUI()
 
-local function queueNextRun()
+local function queueScriptOnTeleport()
 	local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 	if type(qot) == "function" then
 		pcall(function()
@@ -184,136 +247,158 @@ local function queueNextRun()
 	end
 end
 
-local function rejoin(force)
-	if (not force and not Config.AutoReconnect) or R then return end
-	R = true
-	saveConfig()
-	queueNextRun()
-	st.Text = "Status: Rejoining..."
-	st.TextColor3 = Color3.fromRGB(255, 205, 90)
-	while task.wait(2) do
-		pcall(function()
-			if Config.SameServer and #game.Players:GetPlayers() > 1 then
-				T:TeleportToPlaceInstance(P, game.JobId, L)
-			else
-				T:Teleport(P, L)
-			end
-		end)
+local function startRejoin(force)
+	if (not force and not Config.AutoReconnect) or isRejoining then
+		return
 	end
+	isRejoining = true
+	saveConfig()
+	queueScriptOnTeleport()
+
+	statusLabel.Text = "Status: Rejoining..."
+	statusLabel.TextColor3 = Color3.fromRGB(255, 205, 90)
+
+	task.spawn(function()
+		while task.wait(2) do
+			pcall(function()
+				local jobId = game.JobId
+				if Config.SameServer and type(jobId) == "string" and jobId ~= "" and #Players:GetPlayers() > 1 then
+					TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, LocalPlayer)
+				else
+					TeleportService:Teleport(PLACE_ID, LocalPlayer)
+				end
+			end)
+		end
+	end)
 end
 
-b1.MouseButton1Click:Connect(function()
+closeBtn.MouseButton1Click:Connect(function()
+	screenGui:Destroy()
+end)
+
+autoBtn.MouseButton1Click:Connect(function()
 	Config.AutoReconnect = not Config.AutoReconnect
 	saveConfig()
-	refreshMainUI()
+	updateMainUI()
 end)
 
-b2.MouseButton1Click:Connect(function()
+serverBtn.MouseButton1Click:Connect(function()
 	Config.SameServer = not Config.SameServer
 	saveConfig()
-	refreshMainUI()
+	updateMainUI()
 end)
 
-b3.MouseButton1Click:Connect(function()
-	st.Text = "Test: Error 277!"
-	st.TextColor3 = Color3.fromRGB(255, 185, 85)
+testErrBtn.MouseButton1Click:Connect(function()
+	statusLabel.Text = "Test: Error 277!"
+	statusLabel.TextColor3 = Color3.fromRGB(255, 185, 85)
 	pcall(function()
-		local o = C:FindFirstChild("RobloxPromptGui") and C.RobloxPromptGui:FindFirstChild("promptOverlay")
-		if o then
-			local m = Instance.new("TextLabel", o)
-			m.Name = "TestErr"
-			m.Size = UDim2.new(0, 300, 0, 80)
-			m.Position = UDim2.new(0.5, -150, 0.5, -40)
-			m.BackgroundColor3 = Color3.fromRGB(45, 48, 56)
-			m.Text = "Disconnected (Error 277)"
-			m.TextColor3 = Color3.new(1, 1, 1)
-			m.Font = Enum.Font.GothamBold
-			m.TextSize = 14
+		local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
+		local overlay = promptGui and promptGui:FindFirstChild("promptOverlay")
+		if overlay then
+			local oldTest = overlay:FindFirstChild("Uze9rTestError")
+			if oldTest then oldTest:Destroy() end
+
+			local msg = Instance.new("TextLabel")
+			msg.Name = "Uze9rTestError"
+			msg.Size = UDim2.new(0, 300, 0, 80)
+			msg.Position = UDim2.new(0.5, -150, 0.5, -40)
+			msg.BackgroundColor3 = Color3.fromRGB(45, 48, 56)
+			msg.Text = "Disconnected (Error 277)"
+			msg.TextColor3 = Color3.fromRGB(255, 255, 255)
+			msg.Font = Enum.Font.GothamBold
+			msg.TextSize = 14
+			msg.Parent = overlay
 		end
 	end)
 	task.wait(0.7)
-	rejoin(true)
+	startRejoin(true)
 end)
 
-tToggle.MouseButton1Click:Connect(function()
+timerToggleBtn.MouseButton1Click:Connect(function()
 	Config.TimerEnabled = not Config.TimerEnabled
-	elapsed = 0
+	elapsedSeconds = 0
 	saveConfig()
-	refreshTimerUI()
+	updateTimerUI()
 end)
 
-tMinus.MouseButton1Click:Connect(function()
+timerMinusBtn.MouseButton1Click:Connect(function()
 	if Config.TimerHours > 1 then
 		Config.TimerHours -= 1
-		elapsed = 0
+		elapsedSeconds = 0
 		saveConfig()
-		refreshTimerUI()
+		updateTimerUI()
 	end
 end)
 
-tPlus.MouseButton1Click:Connect(function()
+timerPlusBtn.MouseButton1Click:Connect(function()
 	if Config.TimerHours < 24 then
 		Config.TimerHours += 1
-		elapsed = 0
+		elapsedSeconds = 0
 		saveConfig()
-		refreshTimerUI()
+		updateTimerUI()
 	end
 end)
 
--- Dragging (Mouse + Touch) + saving position
-local dragging, dragInput, dragStart, startPos
-top.InputBegan:Connect(function(input)
+-- Dragging (Mouse + Touch)
+local isDragging = false
+local dragStartPos = Vector3.zero
+local frameStartPos = mainFrame.Position
+
+titleLabel.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		startPos = f.Position
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-				Config.PosXScale = f.Position.X.Scale
-				Config.PosXOffset = f.Position.X.Offset
-				Config.PosYScale = f.Position.Y.Scale
-				Config.PosYOffset = f.Position.Y.Offset
-				saveConfig()
-			end
-		end)
+		isDragging = true
+		dragStartPos = input.Position
+		frameStartPos = mainFrame.Position
 	end
 end)
 
-top.InputChanged:Connect(function(input)
+UserInputService.InputChanged:Connect(function(input)
+	if not isDragging then return end
 	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		dragInput = input
+		local delta = input.Position - dragStartPos
+		mainFrame.Position = UDim2.new(
+			frameStartPos.X.Scale,
+			frameStartPos.X.Offset + delta.X,
+			frameStartPos.Y.Scale,
+			frameStartPos.Y.Offset + delta.Y
+		)
 	end
 end)
 
-U.InputChanged:Connect(function(input)
-	if input == dragInput and dragging then
-		local delta = input.Position - dragStart
-		f.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+UserInputService.InputEnded:Connect(function(input)
+	if not isDragging then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		isDragging = false
+		Config.PosXScale = mainFrame.Position.X.Scale
+		Config.PosXOffset = mainFrame.Position.X.Offset
+		Config.PosYScale = mainFrame.Position.Y.Scale
+		Config.PosYOffset = mainFrame.Position.Y.Offset
+		saveConfig()
 	end
 end)
 
--- Disconnect watch + timer loop
+-- Main loop: error watcher + timer
 task.spawn(function()
 	while task.wait(1) do
-		if Config.AutoReconnect and not R then
+		if Config.AutoReconnect and not isRejoining then
 			pcall(function()
-				local o = C:FindFirstChild("RobloxPromptGui") and C.RobloxPromptGui:FindFirstChild("promptOverlay")
-				if o and o:FindFirstChild("ErrorPrompt") then
-					rejoin(false)
+				local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
+				local overlay = promptGui and promptGui:FindFirstChild("promptOverlay")
+				if overlay and overlay:FindFirstChild("ErrorPrompt") then
+					startRejoin(false)
 				end
 			end)
 		end
 
-		if Config.TimerEnabled and not R then
-			elapsed += 1
-			local limit = Config.TimerHours * 3600
-			if elapsed >= limit then
-				elapsed = 0
-				refreshTimerUI()
-				rejoin(true)
+		if Config.TimerEnabled and not isRejoining then
+			elapsedSeconds += 1
+			local limitSeconds = Config.TimerHours * 3600
+			if elapsedSeconds >= limitSeconds then
+				elapsedSeconds = 0
+				updateTimerUI()
+				startRejoin(true)
 			else
-				refreshTimerUI()
+				updateTimerUI()
 			end
 		end
 	end
