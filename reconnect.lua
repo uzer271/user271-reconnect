@@ -8,6 +8,8 @@ local PLACE_ID = 1537690962
 local CFG_FILE = "uze9r_reconnect_cfg.json"
 local SCRIPT_URL = "https://raw.githubusercontent.com/uzer271/user271-reconnect/refs/heads/main/reconnect.lua"
 
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
 local Config = {
 	AutoReconnect = true,
 	SameServer = true,
@@ -24,56 +26,34 @@ local function hasFS()
 end
 
 local function loadConfig()
-	if not hasFS() then
-		return
-	end
+	if not hasFS() then return end
 	local ok, raw = pcall(function()
 		if isfile(CFG_FILE) then
 			return readfile(CFG_FILE)
 		end
 		return nil
 	end)
-	if not ok or type(raw) ~= "string" or raw == "" then
-		return
-	end
+	if not ok or type(raw) ~= "string" then return end
 
-	local decOk, data = pcall(function()
+	local decodedOk, data = pcall(function()
 		return HttpService:JSONDecode(raw)
 	end)
-	if not decOk or type(data) ~= "table" then
-		return
-	end
+	if not decodedOk or type(data) ~= "table" then return end
 
-	if type(data.AutoReconnect) == "boolean" then
-		Config.AutoReconnect = data.AutoReconnect
-	end
-	if type(data.SameServer) == "boolean" then
-		Config.SameServer = data.SameServer
-	end
-	if type(data.TimerEnabled) == "boolean" then
-		Config.TimerEnabled = data.TimerEnabled
-	end
+	if type(data.AutoReconnect) == "boolean" then Config.AutoReconnect = data.AutoReconnect end
+	if type(data.SameServer) == "boolean" then Config.SameServer = data.SameServer end
+	if type(data.TimerEnabled) == "boolean" then Config.TimerEnabled = data.TimerEnabled end
 	if type(data.TimerHours) == "number" then
 		Config.TimerHours = math.clamp(math.floor(data.TimerHours), 1, 24)
 	end
-	if type(data.PosXScale) == "number" then
-		Config.PosXScale = data.PosXScale
-	end
-	if type(data.PosXOffset) == "number" then
-		Config.PosXOffset = data.PosXOffset
-	end
-	if type(data.PosYScale) == "number" then
-		Config.PosYScale = data.PosYScale
-	end
-	if type(data.PosYOffset) == "number" then
-		Config.PosYOffset = data.PosYOffset
-	end
+	if type(data.PosXScale) == "number" then Config.PosXScale = data.PosXScale end
+	if type(data.PosXOffset) == "number" then Config.PosXOffset = data.PosXOffset end
+	if type(data.PosYScale) == "number" then Config.PosYScale = data.PosYScale end
+	if type(data.PosYOffset) == "number" then Config.PosYOffset = data.PosYOffset end
 end
 
 local function saveConfig()
-	if not hasFS() then
-		return
-	end
+	if not hasFS() then return end
 	pcall(function()
 		writefile(CFG_FILE, HttpService:JSONEncode(Config))
 	end)
@@ -84,57 +64,21 @@ loadConfig()
 local isRejoining = false
 local elapsedSeconds = 0
 
-local function getLocalPlayer()
-	local lp = Players.LocalPlayer
-	if lp then
-		return lp
-	end
-	for _ = 1, 30 do
-		lp = Players.LocalPlayer
-		if lp then
-			return lp
-		end
-		task.wait(0.2)
-	end
-	return nil
-end
-
-local function getGuiParent(lp)
+local function getGuiParent()
 	local ok, hui = pcall(function()
-		if type(gethui) == "function" then
-			return gethui()
-		end
-		return nil
+		return type(gethui) == "function" and gethui() or nil
 	end)
 	if ok and typeof(hui) == "Instance" then
 		return hui
 	end
-
-	local cgOk, cgRes = pcall(function()
-		return CoreGui
-	end)
-	if cgOk and typeof(cgRes) == "Instance" then
-		return cgRes
-	end
-
-	if lp then
-		return lp:WaitForChild("PlayerGui")
-	end
-	return nil
+	return CoreGui
 end
 
-local localPlayer = getLocalPlayer()
-local parentGui = getGuiParent(localPlayer)
-if not parentGui then
-	return
+local parentGui = getGuiParent()
+local existing = parentGui:FindFirstChild("Uze9rReconnectGui")
+if existing then
+	existing:Destroy()
 end
-
-pcall(function()
-	local oldGui = parentGui:FindFirstChild("Uze9rReconnectGui")
-	if oldGui then
-		oldGui:Destroy()
-	end
-end)
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "Uze9rReconnectGui"
@@ -154,12 +98,6 @@ mainFrame.Parent = screenGui
 local mainCorner = Instance.new("UICorner")
 mainCorner.CornerRadius = UDim.new(0, 8)
 mainCorner.Parent = mainFrame
-
-local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = Color3.fromRGB(115, 120, 132)
-mainStroke.Thickness = 1.5
-mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-mainStroke.Parent = mainFrame
 
 local titleLabel = Instance.new("TextLabel")
 titleLabel.Name = "Title"
@@ -202,7 +140,7 @@ statusLabel.TextSize = 11
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Parent = mainFrame
 
-local function makeBtn(name, yPos, xPos, width, height, text, bgColor)
+local function createButton(name, yPos, xPos, width, height, text, bgColor)
 	local btn = Instance.new("TextButton")
 	btn.Name = name
 	btn.Size = UDim2.new(0, width, 0, height)
@@ -221,12 +159,12 @@ local function makeBtn(name, yPos, xPos, width, height, text, bgColor)
 	return btn
 end
 
-local autoBtn = makeBtn("AutoBtn", 49, 8, 216, 26, "", Color3.fromRGB(45, 140, 80))
-local serverBtn = makeBtn("ServerBtn", 79, 8, 216, 26, "", Color3.fromRGB(40, 45, 58))
-local testErrBtn = makeBtn("TestErrBtn", 109, 8, 216, 26, "Test Error", Color3.fromRGB(175, 105, 35))
+local autoBtn = createButton("AutoBtn", 49, 8, 216, 26, "", Color3.fromRGB(45, 140, 80))
+local serverBtn = createButton("ServerBtn", 79, 8, 216, 26, "", Color3.fromRGB(40, 45, 58))
+local testErrBtn = createButton("TestErrBtn", 109, 8, 216, 26, "Test Error", Color3.fromRGB(175, 105, 35))
 
-local timerToggleBtn = makeBtn("TimerToggleBtn", 139, 8, 118, 26, "", Color3.fromRGB(55, 60, 75))
-local timerMinusBtn = makeBtn("TimerMinusBtn", 139, 130, 26, 26, "-", Color3.fromRGB(40, 45, 58))
+local timerToggleBtn = createButton("TimerToggleBtn", 139, 8, 118, 26, "", Color3.fromRGB(55, 60, 75))
+local timerMinusBtn = createButton("TimerMinusBtn", 139, 130, 26, 26, "-", Color3.fromRGB(40, 45, 58))
 
 local timerHoursLabel = Instance.new("TextLabel")
 timerHoursLabel.Name = "TimerHours"
@@ -244,7 +182,7 @@ local hoursCorner = Instance.new("UICorner")
 hoursCorner.CornerRadius = UDim.new(0, 6)
 hoursCorner.Parent = timerHoursLabel
 
-local timerPlusBtn = makeBtn("TimerPlusBtn", 139, 204, 26, 26, "+", Color3.fromRGB(40, 45, 58))
+local timerPlusBtn = createButton("TimerPlusBtn", 139, 204, 26, 26, "+", Color3.fromRGB(40, 45, 58))
 
 local timerInfoLabel = Instance.new("TextLabel")
 timerInfoLabel.Name = "TimerInfo"
@@ -323,15 +261,11 @@ local function startRejoin(force)
 	task.spawn(function()
 		while task.wait(2) do
 			pcall(function()
-				local lp = getLocalPlayer()
-				if not lp then
-					return
-				end
 				local jobId = game.JobId
 				if Config.SameServer and type(jobId) == "string" and jobId ~= "" and #Players:GetPlayers() > 1 then
-					TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, lp)
+					TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, LocalPlayer)
 				else
-					TeleportService:Teleport(PLACE_ID, lp)
+					TeleportService:Teleport(PLACE_ID, LocalPlayer)
 				end
 			end)
 		end
@@ -355,35 +289,28 @@ serverBtn.MouseButton1Click:Connect(function()
 end)
 
 testErrBtn.MouseButton1Click:Connect(function()
-	statusLabel.Text = "ВАС ОБНУЛИЛИ ЗА НАТРО АТЛАС"
-	statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+	statusLabel.Text = "Test: Error 277!"
+	statusLabel.TextColor3 = Color3.fromRGB(255, 185, 85)
 	pcall(function()
 		local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
 		local overlay = promptGui and promptGui:FindFirstChild("promptOverlay")
 		if overlay then
 			local oldTest = overlay:FindFirstChild("Uze9rTestError")
-			if oldTest then
-				oldTest:Destroy()
-			end
+			if oldTest then oldTest:Destroy() end
 
 			local msg = Instance.new("TextLabel")
 			msg.Name = "Uze9rTestError"
-			msg.Size = UDim2.new(0, 340, 0, 90)
-			msg.Position = UDim2.new(0.5, -170, 0.5, -45)
+			msg.Size = UDim2.new(0, 300, 0, 80)
+			msg.Position = UDim2.new(0.5, -150, 0.5, -40)
 			msg.BackgroundColor3 = Color3.fromRGB(45, 48, 56)
-			msg.Text = "ВАС ОБНУЛИЛИ ЗА НАТРО АТЛАС"
+			msg.Text = "Disconnected (Error 277)"
 			msg.TextColor3 = Color3.fromRGB(255, 255, 255)
 			msg.Font = Enum.Font.GothamBold
-			msg.TextSize = 15
-			msg.TextWrapped = true
+			msg.TextSize = 14
 			msg.Parent = overlay
-
-			local msgCorner = Instance.new("UICorner")
-			msgCorner.CornerRadius = UDim.new(0, 8)
-			msgCorner.Parent = msg
 		end
 	end)
-	task.wait(0.9)
+	task.wait(0.7)
 	startRejoin(true)
 end)
 
@@ -412,6 +339,7 @@ timerPlusBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
+-- Dragging (Mouse + Touch)
 local isDragging = false
 local dragStartPos = Vector3.zero
 local frameStartPos = mainFrame.Position
@@ -425,9 +353,7 @@ titleLabel.InputBegan:Connect(function(input)
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-	if not isDragging then
-		return
-	end
+	if not isDragging then return end
 	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
 		local delta = input.Position - dragStartPos
 		mainFrame.Position = UDim2.new(
@@ -440,9 +366,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if not isDragging then
-		return
-	end
+	if not isDragging then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		isDragging = false
 		Config.PosXScale = mainFrame.Position.X.Scale
@@ -453,6 +377,7 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
+-- Main loop: error watcher + timer
 task.spawn(function()
 	while task.wait(1) do
 		if Config.AutoReconnect and not isRejoining then
