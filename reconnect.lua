@@ -99,6 +99,12 @@ local mainCorner = Instance.new("UICorner")
 mainCorner.CornerRadius = UDim.new(0, 8)
 mainCorner.Parent = mainFrame
 
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(115, 120, 132)
+mainStroke.Thickness = 1.5
+mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+mainStroke.Parent = mainFrame
+
 local titleLabel = Instance.new("TextLabel")
 titleLabel.Name = "Title"
 titleLabel.Size = UDim2.new(1, -30, 0, 28)
@@ -124,8 +130,7 @@ closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = 14
 closeBtn.Parent = mainFrame
 
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 5)
+нcloseCorner.CornerRadius = UDim.new(0, 5)
 closeCorner.Parent = closeBtn
 
 local statusLabel = Instance.new("TextLabel")
@@ -289,8 +294,8 @@ serverBtn.MouseButton1Click:Connect(function()
 end)
 
 testErrBtn.MouseButton1Click:Connect(function()
-	statusLabel.Text = "Test: Error 277!"
-	statusLabel.TextColor3 = Color3.fromRGB(255, 185, 85)
+	statusLabel.Text = "ВАС ОБНУЛИЛИ ЗА НАТРО АТЛАС"
+	statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
 	pcall(function()
 		local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
 		local overlay = promptGui and promptGui:FindFirstChild("promptOverlay")
@@ -300,17 +305,22 @@ testErrBtn.MouseButton1Click:Connect(function()
 
 			local msg = Instance.new("TextLabel")
 			msg.Name = "Uze9rTestError"
-			msg.Size = UDim2.new(0, 300, 0, 80)
-			msg.Position = UDim2.new(0.5, -150, 0.5, -40)
+			msg.Size = UDim2.new(0, 340, 0, 90)
+			msg.Position = UDim2.new(0.5, -170, 0.5, -45)
 			msg.BackgroundColor3 = Color3.fromRGB(45, 48, 56)
-			msg.Text = "Disconnected (Error 277)"
+			msg.Text = "ВАС ОБНУЛИЛИ ЗА НАТРО АТЛАС"
 			msg.TextColor3 = Color3.fromRGB(255, 255, 255)
 			msg.Font = Enum.Font.GothamBold
-			msg.TextSize = 14
+			msg.TextSize = 15
+			msg.TextWrapped = true
 			msg.Parent = overlay
+
+			local msgCorner = Instance.new("UICorner")
+			msgCorner.CornerRadius = UDim.new(0, 8)
+			msgCorner.Parent = msg
 		end
 	end)
-	task.wait(0.7)
+	task.wait(0.9)
 	startRejoin(true)
 end)
 
