@@ -8,7 +8,7 @@ local HttpService = game:GetService("HttpService")
 
 local PLACE_ID = 1537690962
 local OWNER_HANDLE = "@uze9r"
-local STATS_FILE = "uze9r_bss_pollen_stats.json"
+local STATS_FILE = "uze9r_bss_pollen_stats_v4.json"
 
 local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
@@ -40,39 +40,81 @@ local noclipEnabled = false
 local flySpeed = 50
 local mobileBtnVisible = false
 
-local DEFAULT_W = 296
-local DEFAULT_H = 326
+local DEFAULT_W = 330
+local DEFAULT_H = 365
 local menuWidth = DEFAULT_W
 local menuHeight = DEFAULT_H
 
 local currentTab = "Main"
-local statsMode = "Session" -- "Session" or "AllTime"
+local statsCategory = "PollenSources" -- PollenSources, PollenFields, Tokens, Other
+local statsPeriod = "Session" -- LastHour, Session, AllTime
 local copyResetToken = 0
 
 local flyBV = nil
 local flyBG = nil
 
--- Pollen Tracker Categories
-local SOURCE_ORDER = {
-	"Tool / Wand",
+-- NatroMacro v2 Exact Pollen Sources Categories (multi-tag hierarchical attribution)
+local POLLEN_SOURCES = {
+	"All Bees",
+	"Gifted Bees",
+	"All Bee Abilities",
+	"Blue Bees",
+	"Blue Abilities",
+	"Blue Bee Abilities",
+	"Red Bees",
+	"Red Abilities",
+	"Colorless Bees",
+	"Mythic Bees",
+	"Event Bees",
+	"Bubbles",
+	"Tadpole Bees",
+	"Gold Bubbles",
+	"Star Shower",
+	"Falling Coconuts",
+	"Bomb",
+	"Flames",
+	"Tornado",
+	"Marks",
 	"Petal Wand",
-	"Red / Blue Bomb",
-	"Flame / Fire",
-	"Bee Gather",
-	"Tornado / Cloud",
-	"Bubble / Pop",
-	"Mark / Beam / Pulse",
-	"Sprinkler / Other"
+	"Tool"
 }
 
-local sessionPollen = {}
-local allTimePollen = {}
-for _, k in ipairs(SOURCE_ORDER) do
-	sessionPollen[k] = 0
-	allTimePollen[k] = 0
+local FIELD_NAMES = {
+	"Sunflower Field", "Dandelion Field", "Mushroom Field", "Blue Flower Field",
+	"Clover Field", "Strawberry Field", "Spider Field", "Bamboo Field",
+	"Pineapple Patch", "Stump Field", "Cactus Field", "Pumpkin Patch",
+	"Pine Tree Forest", "Rose Field", "Mountain Top Field", "Pepper Patch", "Coconut Field"
+}
+
+-- Stats Data Structures
+local function newStatBucket()
+	return {
+		TotalPollen = 0,
+		Sources = {},
+		Fields = {},
+		Tokens = {},
+		Other = {
+			["Instant Conversion"] = 0,
+			["Honey Converted"] = 0,
+			["Crit Hits"] = 0,
+			["Super-Crits"] = 0,
+			["Pollen Popups"] = 0
+		}
+	}
 end
-local sessionTotalPollen = 0
-local allTimeTotalPollen = 0
+
+local sessionStats = newStatBucket()
+local allTimeStats = newStatBucket()
+local lastHourEvents = {} -- circular log of { t = tick(), pollen = num, tags = {}, field = str, token = str }
+
+for _, s in ipairs(POLLEN_SOURCES) do
+	sessionStats.Sources[s] = 0
+	allTimeStats.Sources[s] = 0
+end
+for _, fld in ipairs(FIELD_NAMES) do
+	sessionStats.Fields[fld] = 0
+	allTimeStats.Fields[fld] = 0
+end
 
 local function hasFS()
 	return type(isfile) == "function" and type(readfile) == "function" and type(writefile) == "function"
@@ -87,13 +129,15 @@ local function loadAllTimeStats()
 			local raw = readfile(STATS_FILE)
 			local data = HttpService:JSONDecode(raw)
 			if type(data) == "table" then
-				if type(data.Total) == "number" then
-					allTimeTotalPollen = math.max(0, math.floor(data.Total))
+				if type(data.TotalPollen) == "number" then
+					allTimeStats.TotalPollen = data.TotalPollen
 				end
-				if type(data.Sources) == "table" then
-					for _, k in ipairs(SOURCE_ORDER) do
-						if type(data.Sources[k]) == "number" then
-							allTimePollen[k] = math.max(0, math.floor(data.Sources[k]))
+				for _, tblKey in ipairs({ "Sources", "Fields", "Tokens", "Other" }) do
+					if type(data[tblKey]) == "table" then
+						for k, v in pairs(data[tblKey]) do
+							if type(v) == "number" then
+								allTimeStats[tblKey][k] = v
+							end
 						end
 					end
 				end
@@ -102,23 +146,20 @@ local function loadAllTimeStats()
 	end)
 end
 
-local function saveAllTimeStats()
+local function saveAllTimeStats(customFilename)
 	if not hasFS() then
-		return
+		return false
 	end
-	pcall(function()
-		local payload = {
-			Total = allTimeTotalPollen,
-			Sources = allTimePollen
-		}
-		writefile(STATS_FILE, HttpService:JSONEncode(payload))
+	local ok = pcall(function()
+		writefile(customFilename or STATS_FILE, HttpService:JSONEncode(allTimeStats))
 	end)
+	return ok
 end
 
 loadAllTimeStats()
 
 local function formatNumber(n)
-	n = math.floor(tonumber(n) or 0)
+	n = tonumber(n) or 0
 	if n >= 1e12 then
 		return string.format("%.2fT", n / 1e12)
 	elseif n >= 1e9 then
@@ -126,9 +167,9 @@ local function formatNumber(n)
 	elseif n >= 1e6 then
 		return string.format("%.2fM", n / 1e6)
 	elseif n >= 1e3 then
-		return string.format("%.1fK", n / 1e3)
+		return string.format("%.2fK", n / 1e3)
 	end
-	return tostring(n)
+	return tostring(math.floor(n))
 end
 
 local function formatDuration(sec)
@@ -139,80 +180,435 @@ local function formatDuration(sec)
 	return string.format("%02d:%02d:%02d", h, m, s)
 end
 
--- Classify pollen source based on active tools, projectiles/particles, and color
-local lastToolSwingTime = 0
-local lastEquippedToolName = ""
+-- Parse abbreviated BSS popup numbers ("+1.25M", "+450K", "12,340")
+local function parsePopupNumber(txt)
+	if type(txt) ~= "string" then
+		return nil
+	end
+	local clean = txt:gsub(",", ""):gsub("%s+", "")
+	local numStr, suffix = clean:match("([%d%.]+)([KMBTQkmbtq]?)")
+	local val = tonumber(numStr)
+	if not val or val <= 0 then
+		return nil
+	end
+	suffix = string.upper(suffix or "")
+	local mult = 1
+	if suffix == "K" then mult = 1e3
+	elseif suffix == "M" then mult = 1e6
+	elseif suffix == "B" then mult = 1e9
+	elseif suffix == "T" then mult = 1e12
+	elseif suffix == "Q" then mult = 1e15
+	end
+	return val * mult
+end
 
-local function detectPollenSource(pollenColor)
-	local now = tick()
+-- Detect current field from workspace.FlowerZones
+local function getCurrentField()
 	local char = lp.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
-	local tool = char and char:FindFirstChildOfClass("Tool")
-	if tool then
-		lastEquippedToolName = tool.Name
+	if not root then
+		return "Unknown Field"
 	end
-
-	-- 1. Check nearby active effects/projectiles around player
-	if root then
-		local pos = root.Position
-		local particles = workspace:FindFirstChild("Particles")
-		if particles then
-			for _, obj in ipairs(particles:GetChildren()) do
-				local objPos = nil
-				if obj:IsA("BasePart") then
-					objPos = obj.Position
-				elseif obj:IsA("Model") and obj.PrimaryPart then
-					objPos = obj.PrimaryPart.Position
+	local pos = root.Position
+	local zones = workspace:FindFirstChild("FlowerZones")
+	if zones then
+		local bestField, bestDist = nil, math.huge
+		for _, zone in ipairs(zones:GetChildren()) do
+			if zone:IsA("BasePart") then
+				local dx = math.abs(pos.X - zone.Position.X)
+				local dz = math.abs(pos.Z - zone.Position.Z)
+				if dx <= (zone.Size.X * 0.5 + 8) and dz <= (zone.Size.Z * 0.5 + 8) then
+					return zone.Name
 				end
-				if objPos and (objPos - pos).Magnitude <= 38 then
-					local n = string.lower(obj.Name)
-					if string.find(n, "petal") or string.find(n, "shuriken") then
-						return "Petal Wand"
-					elseif string.find(n, "bomb") or string.find(n, "buzz") then
-						return "Red / Blue Bomb"
-					elseif string.find(n, "flame") or string.find(n, "fire") or string.find(n, "inferno") then
-						return "Flame / Fire"
-					elseif string.find(n, "tornado") or string.find(n, "cloud") or string.find(n, "wind") then
-						return "Tornado / Cloud"
-					elseif string.find(n, "bubble") or string.find(n, "pop") or string.find(n, "frog") then
-						return "Bubble / Pop"
-					elseif string.find(n, "mark") or string.find(n, "beam") or string.find(n, "pulse") or string.find(n, "laser") or string.find(n, "precise") then
-						return "Mark / Beam / Pulse"
+				local d = (pos - zone.Position).Magnitude
+				if d < bestDist then
+					bestDist = d
+					bestField = zone.Name
+				end
+			end
+		end
+		if bestField and bestDist < 120 then
+			return bestField
+		end
+	end
+	return "Outside Fields"
+end
+
+-- Inspect active hive bees & recent combat/ability events to classify NatroMacro tags
+local hiveBeeRoster = {
+	hasBlue = false, hasRed = false, hasColorless = false,
+	hasGifted = false, hasMythic = false, hasEvent = false, hasTadpole = false
+}
+
+local function scanPlayerHive()
+	pcall(function()
+		local hives = workspace:FindFirstChild("Honeycombs")
+		if not hives then
+			return
+		end
+		for _, hive in ipairs(hives:GetChildren()) do
+			local ownerVal = hive:FindFirstChild("Owner")
+			if ownerVal and ownerVal.Value == lp then
+				local cells = hive:FindFirstChild("Cells")
+				if cells then
+					for _, cell in ipairs(cells:GetChildren()) do
+						local beeType = cell:FindFirstChild("CellType")
+						local gifted = cell:FindFirstChild("Gifted")
+						local bName = beeType and tostring(beeType.Value) or ""
+						if bName ~= "" and bName ~= "Empty" then
+							if gifted and gifted.Value == true then
+								hiveBeeRoster.hasGifted = true
+							end
+							local low = string.lower(bName)
+							if string.find(low, "tadpole") then
+								hiveBeeRoster.hasTadpole = true
+								hiveBeeRoster.hasMythic = true
+								hiveBeeRoster.hasBlue = true
+							elseif string.find(low, "buoyant") or string.find(low, "fuzzy") or string.find(low, "vector") or string.find(low, "spicy") or string.find(low, "precise") then
+								hiveBeeRoster.hasMythic = true
+							end
+							if string.find(low, "tabby") or string.find(low, "photon") or string.find(low, "vicious") or string.find(low, "gummy") or string.find(low, "festive") or string.find(low, "windy") or string.find(low, "bear") or string.find(low, "cobalt") or string.find(low, "crimson") or string.find(low, "puppy") or string.find(low, "digital") then
+								hiveBeeRoster.hasEvent = true
+							end
+						end
 					end
 				end
 			end
 		end
-	end
-
-	-- 2. Check recent tool swing
-	if (now - lastToolSwingTime) <= 0.75 then
-		local lowerTool = string.lower(lastEquippedToolName)
-		if string.find(lowerTool, "petal") then
-			return "Petal Wand"
-		end
-		return "Tool / Wand"
-	end
-
-	-- 3. Distinguish Bee Gather vs Sprinkler/Other
-	if pollenColor then
-		-- Standard flower pollen popups from bees vs passive sprinklers
-		return "Bee Gather"
-	end
-	return "Sprinkler / Other"
+	end)
 end
 
-local function recordPollenGain(amount, sourceName)
-	if amount <= 0 then
+-- Recent ability/particle triggers detected in workspace.Particles & ReplicatedStorage events
+local recentTriggers = {
+	GoldBubble = 0,
+	Bubble = 0,
+	StarShower = 0,
+	FallingCoconut = 0,
+	Bomb = 0,
+	Flame = 0,
+	Tornado = 0,
+	Mark = 0,
+	ToolSwing = 0,
+	EquippedTool = ""
+}
+
+local function hookWorkspaceParticles()
+	local particles = workspace:FindFirstChild("Particles")
+	if not particles then
 		return
 	end
-	if not sessionPollen[sourceName] then
-		sourceName = "Sprinkler / Other"
-	end
-	sessionPollen[sourceName] += amount
-	allTimePollen[sourceName] += amount
-	sessionTotalPollen += amount
-	allTimeTotalPollen += amount
+	particles.ChildAdded:Connect(function(obj)
+		local char = lp.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if not root then
+			return
+		end
+		task.defer(function()
+			local objPos = nil
+			if obj:IsA("BasePart") then
+				objPos = obj.Position
+			elseif obj:IsA("Model") and obj.PrimaryPart then
+				objPos = obj.PrimaryPart.Position
+			end
+			if objPos and (objPos - root.Position).Magnitude > 55 then
+				return
+			end
+			local now = tick()
+			local n = string.lower(obj.Name)
+			if string.find(n, "gold") and string.find(n, "bubble") then
+				recentTriggers.GoldBubble = now
+				recentTriggers.Bubble = now
+			elseif string.find(n, "bubble") or string.find(n, "pop") then
+				recentTriggers.Bubble = now
+			elseif string.find(n, "star") or string.find(n, "shower") or string.find(n, "meteor") then
+				recentTriggers.StarShower = now
+			elseif string.find(n, "coconut") then
+				recentTriggers.FallingCoconut = now
+			elseif string.find(n, "bomb") or string.find(n, "buzz") then
+				recentTriggers.Bomb = now
+			elseif string.find(n, "flame") or string.find(n, "fire") or string.find(n, "inferno") then
+				recentTriggers.Flame = now
+			elseif string.find(n, "tornado") or string.find(n, "cloud") or string.find(n, "wind") then
+				recentTriggers.Tornado = now
+			elseif string.find(n, "mark") or string.find(n, "beam") or string.find(n, "pulse") or string.find(n, "precise") then
+				recentTriggers.Mark = now
+			end
+		end)
+	end)
 end
+
+hookWorkspaceParticles()
+
+-- Classify a single pollen gain into NatroMacro multi-tag hierarchy
+local function classifyPollenTags(popupColor)
+	local now = tick()
+	local tags = {}
+
+	-- Color inference from popup TextColor3
+	local isBlueColor, isRedColor, isWhiteColor = false, false, false
+	if popupColor then
+		if popupColor.B > popupColor.R + 0.18 and popupColor.B > popupColor.G + 0.1 then
+			isBlueColor = true
+		elseif popupColor.R > popupColor.G + 0.2 and popupColor.R > popupColor.B + 0.2 then
+			isRedColor = true
+		else
+			isWhiteColor = true
+		end
+	end
+
+	-- 1. Check Tool / Petal Wand first
+	if (now - recentTriggers.ToolSwing) <= 0.65 then
+		local tLow = string.lower(recentTriggers.EquippedTool)
+		if string.find(tLow, "petal") then
+			tags["Petal Wand"] = true
+		end
+		tags["Tool"] = true
+		return tags
+	end
+
+	-- 2. Check Special Passive / Supreme Star / Equipment Abilities
+	if (now - recentTriggers.StarShower) <= 1.2 then
+		tags["Star Shower"] = true
+		return tags
+	end
+	if (now - recentTriggers.FallingCoconut) <= 1.2 then
+		tags["Falling Coconuts"] = true
+		return tags
+	end
+
+	-- 3. Check Bee Abilities (Bubbles, Bombs, Flames, Tornado, Marks)
+	local isAbility = false
+	if (now - recentTriggers.GoldBubble) <= 1.1 then
+		tags["Gold Bubbles"] = true
+		tags["Bubbles"] = true
+		tags["Tadpole Bees"] = true
+		tags["Mythic Bees"] = true
+		tags["Blue Bees"] = true
+		tags["Blue Abilities"] = true
+		tags["Blue Bee Abilities"] = true
+		isAbility = true
+	elseif (now - recentTriggers.Bubble) <= 1.1 then
+		tags["Bubbles"] = true
+		tags["Tadpole Bees"] = true
+		tags["Mythic Bees"] = true
+		tags["Blue Bees"] = true
+		tags["Blue Abilities"] = true
+		tags["Blue Bee Abilities"] = true
+		isAbility = true
+	elseif (now - recentTriggers.Bomb) <= 1.1 then
+		tags["Bomb"] = true
+		isAbility = true
+		if isBlueColor then
+			tags["Blue Bees"] = true
+			tags["Blue Abilities"] = true
+			tags["Blue Bee Abilities"] = true
+		elseif isRedColor then
+			tags["Red Bees"] = true
+			tags["Red Abilities"] = true
+		else
+			tags["Colorless Bees"] = true
+		end
+	elseif (now - recentTriggers.Flame) <= 1.1 then
+		tags["Flames"] = true
+		tags["Red Bees"] = true
+		tags["Red Abilities"] = true
+		isAbility = true
+	elseif (now - recentTriggers.Tornado) <= 1.2 then
+		tags["Tornado"] = true
+		tags["Event Bees"] = true
+		tags["Colorless Bees"] = true
+		isAbility = true
+	elseif (now - recentTriggers.Mark) <= 1.2 then
+		tags["Marks"] = true
+		tags["Colorless Bees"] = true
+		isAbility = true
+	end
+
+	if isAbility then
+		tags["All Bee Abilities"] = true
+		tags["All Bees"] = true
+		if hiveBeeRoster.hasGifted then
+			tags["Gifted Bees"] = true
+		end
+		return tags
+	end
+
+	-- 4. Standard Bee Gather
+	tags["All Bees"] = true
+	if hiveBeeRoster.hasGifted then
+		tags["Gifted Bees"] = true
+	end
+	if isBlueColor then
+		tags["Blue Bees"] = true
+		if hiveBeeRoster.hasTadpole then
+			tags["Tadpole Bees"] = true
+		end
+		if hiveBeeRoster.hasMythic then
+			tags["Mythic Bees"] = true
+		end
+	elseif isRedColor then
+		tags["Red Bees"] = true
+		if hiveBeeRoster.hasMythic then
+			tags["Mythic Bees"] = true
+		end
+	else
+		tags["Colorless Bees"] = true
+		if hiveBeeRoster.hasEvent then
+			tags["Event Bees"] = true
+		end
+	end
+
+	return tags
+end
+
+local function recordPollenEvent(amount, popupColor, isCrit, isSuperCrit)
+	if not amount or amount <= 0 then
+		return
+	end
+	local field = getCurrentField()
+	local tags = classifyPollenTags(popupColor)
+	local now = tick()
+
+	sessionStats.TotalPollen += amount
+	allTimeStats.TotalPollen += amount
+	sessionStats.Other["Pollen Popups"] += 1
+	allTimeStats.Other["Pollen Popups"] += 1
+
+	if isCrit then
+		sessionStats.Other["Crit Hits"] += 1
+		allTimeStats.Other["Crit Hits"] += 1
+	end
+	if isSuperCrit then
+		sessionStats.Other["Super-Crits"] += 1
+		allTimeStats.Other["Super-Crits"] += 1
+	end
+
+	sessionStats.Fields[field] = (sessionStats.Fields[field] or 0) + amount
+	allTimeStats.Fields[field] = (allTimeStats.Fields[field] or 0) + amount
+
+	for tagName, active in pairs(tags) do
+		if active then
+			sessionStats.Sources[tagName] = (sessionStats.Sources[tagName] or 0) + amount
+			allTimeStats.Sources[tagName] = (allTimeStats.Sources[tagName] or 0) + amount
+		end
+	end
+
+	table.insert(lastHourEvents, {
+		t = now,
+		pollen = amount,
+		tags = tags,
+		field = field
+	})
+end
+
+-- Hook authentic BSS Floating Pollen Popups + CoreStats.Pollen fallback
+local lastPopupRecordTime = 0
+local lastPopupAmount = 0
+
+local function hookFloatingPopups()
+	local function inspectGuiObj(obj)
+		if obj:IsA("TextLabel") then
+			task.defer(function()
+				if not obj or not obj.Parent then
+					return
+				end
+				local txt = obj.Text or ""
+				-- Match BSS pollen popup format e.g. "+1,240" or "+45.2K" (excluding Honey/Damage/XP)
+				if string.sub(txt, 1, 1) == "+" and not string.find(string.lower(txt), "honey") and not string.find(string.lower(txt), "xp") and not string.find(string.lower(txt), "bond") then
+					local val = parsePopupNumber(txt)
+					if val and val >= 1 then
+						local isSuper = string.find(txt, "!!") ~= nil
+						local isCrit = (not isSuper) and (string.find(txt, "!") ~= nil)
+						lastPopupRecordTime = tick()
+						lastPopupAmount = val
+						recordPollenEvent(val, obj.TextColor3, isCrit, isSuper)
+					end
+				end
+			end)
+		end
+	end
+
+	-- Listen to PlayerGui ScreenGuis where BSS spawns BillboardGuis/TextLabels for floating numbers
+	pg.DescendantAdded:Connect(inspectGuiObj)
+	workspace.DescendantAdded:Connect(function(obj)
+		if obj:IsA("TextLabel") and obj:FindFirstAncestorOfClass("BillboardGui") then
+			inspectGuiObj(obj)
+		end
+	end)
+end
+
+hookFloatingPopups()
+
+-- Fallback & Honey/Instant Conversion tracker via CoreStats
+task.spawn(function()
+	local coreStats = lp:WaitForChild("CoreStats", 15)
+	if not coreStats then
+		return
+	end
+	local pollenStat = coreStats:WaitForChild("Pollen", 15)
+	local honeyStat = coreStats:WaitForChild("Honey", 15)
+
+	if pollenStat then
+		local lastP = pollenStat.Value
+		pollenStat:GetPropertyChangedSignal("Value"):Connect(function()
+			local cur = pollenStat.Value
+			local delta = cur - lastP
+			lastP = cur
+			if delta > 0 then
+				-- If floating popup didn't just capture this exact gain, record from CoreStats delta
+				if (tick() - lastPopupRecordTime) > 0.15 then
+					recordPollenEvent(delta, nil, false, false)
+				end
+			end
+		end)
+	end
+
+	if honeyStat then
+		local lastH = honeyStat.Value
+		honeyStat:GetPropertyChangedSignal("Value"):Connect(function()
+			local cur = honeyStat.Value
+			local delta = cur - lastH
+			lastH = cur
+			if delta > 0 then
+				sessionStats.Other["Honey Converted"] += delta
+				allTimeStats.Other["Honey Converted"] += delta
+				-- If Honey increased while actively gathering in a field (not at hive), count Instant Conversion
+				local fld = getCurrentField()
+				if fld ~= "Outside Fields" and fld ~= "Unknown Field" and (tick() - lastPopupRecordTime) <= 0.35 then
+					sessionStats.Other["Instant Conversion"] += delta
+					allTimeStats.Other["Instant Conversion"] += delta
+					-- Also record instant-converted pollen so 100% instant conversion builds are tracked accurately
+					recordPollenEvent(delta, nil, false, false)
+				end
+			end
+		end)
+	end
+end)
+
+-- Track Collected Tokens from workspace.Collectibles
+task.spawn(function()
+	local collectibles = workspace:WaitForChild("Collectibles", 15)
+	if not collectibles then
+		return
+	end
+	collectibles.ChildRemoving:Connect(function(item)
+		local char = lp.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if root and item:IsA("BasePart") and (item.Position - root.Position).Magnitude <= 16 then
+			local tokName = item.Name
+			if tokName == "C" or tokName == "" then
+				local dec = item:FindFirstChildOfClass("Decal")
+				if dec and dec.Texture ~= "" then
+					tokName = "Token (" .. tostring(dec.Texture):match("%d+") .. ")"
+				else
+					tokName = "Ability / Field Token"
+				end
+			end
+			sessionStats.Tokens[tokName] = (sessionStats.Tokens[tokName] or 0) + 1
+			allTimeStats.Tokens[tokName] = (allTimeStats.Tokens[tokName] or 0) + 1
+		end
+	end)
+end)
 
 -- GUI Setup
 local sg = Instance.new("ScreenGui")
@@ -225,7 +621,7 @@ sg.Parent = pg
 local f = Instance.new("Frame")
 f.Name = "MainFrame"
 f.Size = UDim2.new(0, menuWidth, 0, menuHeight)
-f.Position = UDim2.new(0.5, -math.floor(menuWidth / 2), 0.18, 0)
+f.Position = UDim2.new(0.5, -math.floor(menuWidth / 2), 0.14, 0)
 f.BackgroundColor3 = Color3.fromRGB(24, 26, 33)
 f.BorderSizePixel = 0
 f.ZIndex = 1
@@ -278,7 +674,7 @@ x.ZIndex = 5
 x.Parent = f
 Instance.new("UICorner", x).CornerRadius = UDim.new(0, 5)
 
--- Mobile floating toggle button ("Natro reconnect")
+-- Mobile floating toggle button
 local mobileBtn = Instance.new("TextButton")
 mobileBtn.Name = "NatroMobileBtn"
 mobileBtn.Size = UDim2.new(0, 118, 0, 32)
@@ -403,7 +799,7 @@ bindTap(mobileBtn, function()
 end)
 
 -- Left Sidebar for Tabs
-local SIDEBAR_W = 66
+local SIDEBAR_W = 68
 local sidebar = Instance.new("Frame")
 sidebar.Name = "Sidebar"
 sidebar.Size = UDim2.new(0, SIDEBAR_W, 1, -54)
@@ -479,7 +875,7 @@ ownerBtn.Parent = f
 
 local function mkBtn(parent, y, xScale, xOff, wScale, wOff, txt, col)
 	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(wScale, wOff, 0, 24)
+	b.Size = UDim2.new(wScale, wOff, 0, 23)
 	b.Position = UDim2.new(xScale, xOff, 0, y)
 	b.BackgroundColor3 = col
 	b.BorderSizePixel = 0
@@ -519,15 +915,15 @@ sessionLbl.ZIndex = 4
 sessionLbl.Parent = mainContainer
 
 local b1 = mkBtn(mainContainer, 40, 0, 2, 1, -4, "Auto-Reconnect: ON", Color3.fromRGB(45, 140, 80))
-local b2 = mkBtn(mainContainer, 68, 0, 2, 1, -4, "Server: Same", Color3.fromRGB(40, 45, 58))
-local b3 = mkBtn(mainContainer, 96, 0, 2, 1, -4, "Test Error", Color3.fromRGB(175, 105, 35))
+local b2 = mkBtn(mainContainer, 67, 0, 2, 1, -4, "Server: Same", Color3.fromRGB(40, 45, 58))
+local b3 = mkBtn(mainContainer, 94, 0, 2, 1, -4, "Test Error", Color3.fromRGB(175, 105, 35))
 
-local tToggle = mkBtn(mainContainer, 124, 0, 2, 0.52, -4, "Timer: OFF", Color3.fromRGB(55, 60, 75))
-local tMinus = mkBtn(mainContainer, 124, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
+local tToggle = mkBtn(mainContainer, 121, 0, 2, 0.52, -4, "Timer: OFF", Color3.fromRGB(55, 60, 75))
+local tMinus = mkBtn(mainContainer, 121, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
 
 local tVal = Instance.new("TextLabel")
-tVal.Size = UDim2.new(0.20, -2, 0, 24)
-tVal.Position = UDim2.new(0.66, 2, 0, 124)
+tVal.Size = UDim2.new(0.20, -2, 0, 23)
+tVal.Position = UDim2.new(0.66, 2, 0, 121)
 tVal.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
 tVal.BorderSizePixel = 0
 tVal.Text = "3h"
@@ -538,11 +934,11 @@ tVal.ZIndex = 4
 tVal.Parent = mainContainer
 Instance.new("UICorner", tVal).CornerRadius = UDim.new(0, 6)
 
-local tPlus = mkBtn(mainContainer, 124, 0.86, 2, 0.14, -4, "+", Color3.fromRGB(40, 45, 58))
+local tPlus = mkBtn(mainContainer, 121, 0.86, 2, 0.14, -4, "+", Color3.fromRGB(40, 45, 58))
 
 local tInfo = Instance.new("TextLabel")
 tInfo.Size = UDim2.new(1, -6, 0, 16)
-tInfo.Position = UDim2.new(0, 2, 0, 152)
+tInfo.Position = UDim2.new(0, 2, 0, 148)
 tInfo.BackgroundTransparency = 1
 tInfo.Text = "Timer: OFF (3h)"
 tInfo.TextColor3 = Color3.fromRGB(175, 182, 198)
@@ -566,11 +962,11 @@ farmTitle.ZIndex = 4
 farmTitle.Parent = farmContainer
 
 local autoDigBtn = mkBtn(farmContainer, 24, 0, 2, 1, -4, "Auto-Dig: OFF", Color3.fromRGB(55, 60, 75))
-local autoTokensBtn = mkBtn(farmContainer, 52, 0, 2, 1, -4, "Auto-Collect Tokens: OFF", Color3.fromRGB(55, 60, 75))
+local autoTokensBtn = mkBtn(farmContainer, 51, 0, 2, 1, -4, "Auto-Collect Tokens: OFF", Color3.fromRGB(55, 60, 75))
 
 local glitterTitle = Instance.new("TextLabel")
 glitterTitle.Size = UDim2.new(1, -6, 0, 16)
-glitterTitle.Position = UDim2.new(0, 2, 0, 82)
+glitterTitle.Position = UDim2.new(0, 2, 0, 80)
 glitterTitle.BackgroundTransparency = 1
 glitterTitle.Text = "Auto-Glitter / Reglitter (15 - 60m)"
 glitterTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
@@ -580,17 +976,17 @@ glitterTitle.TextXAlignment = Enum.TextXAlignment.Left
 glitterTitle.ZIndex = 4
 glitterTitle.Parent = farmContainer
 
-local glitterToggleBtn = mkBtn(farmContainer, 100, 0, 2, 0.52, -4, "Auto-Glitter: OFF", Color3.fromRGB(55, 60, 75))
-local glitterMinusBtn = mkBtn(farmContainer, 100, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
-local glitterValBtn = mkBtn(farmContainer, 100, 0.66, 2, 0.20, -2, "15m", Color3.fromRGB(32, 35, 44))
+local glitterToggleBtn = mkBtn(farmContainer, 98, 0, 2, 0.52, -4, "Auto-Glitter: OFF", Color3.fromRGB(55, 60, 75))
+local glitterMinusBtn = mkBtn(farmContainer, 98, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
+local glitterValBtn = mkBtn(farmContainer, 98, 0.66, 2, 0.20, -2, "15m", Color3.fromRGB(32, 35, 44))
 glitterValBtn.Font = Enum.Font.GothamBold
-local glitterPlusBtn = mkBtn(farmContainer, 100, 0.86, 2, 0.14, -4, "+", Color3.fromRGB(40, 45, 58))
+local glitterPlusBtn = mkBtn(farmContainer, 98, 0.86, 2, 0.14, -4, "+", Color3.fromRGB(40, 45, 58))
 
-local useGlitterNowBtn = mkBtn(farmContainer, 128, 0, 2, 1, -4, "Use Glitter Now", Color3.fromRGB(52, 115, 195))
+local useGlitterNowBtn = mkBtn(farmContainer, 125, 0, 2, 1, -4, "Use Glitter Now", Color3.fromRGB(52, 115, 195))
 
 local glitterInfo = Instance.new("TextLabel")
 glitterInfo.Size = UDim2.new(1, -6, 0, 16)
-glitterInfo.Position = UDim2.new(0, 2, 0, 156)
+glitterInfo.Position = UDim2.new(0, 2, 0, 152)
 glitterInfo.BackgroundTransparency = 1
 glitterInfo.Text = "Auto-Glitter: OFF (15m)"
 glitterInfo.TextColor3 = Color3.fromRGB(175, 182, 198)
@@ -600,41 +996,58 @@ glitterInfo.TextXAlignment = Enum.TextXAlignment.Left
 glitterInfo.ZIndex = 4
 glitterInfo.Parent = farmContainer
 
--- ==================== STATISTICS TAB ====================
-local statsModeSessionBtn = mkBtn(statsContainer, 2, 0, 2, 0.50, -3, "Session", Color3.fromRGB(52, 115, 195))
-local statsModeAllBtn = mkBtn(statsContainer, 2, 0.50, 2, 0.50, -4, "All Time", Color3.fromRGB(40, 45, 58))
-
-local statsTotalLbl = Instance.new("TextLabel")
-statsTotalLbl.Size = UDim2.new(1, -6, 0, 16)
-statsTotalLbl.Position = UDim2.new(0, 2, 0, 29)
-statsTotalLbl.BackgroundTransparency = 1
-statsTotalLbl.Text = "Total Pollen: 0"
-statsTotalLbl.TextColor3 = Color3.fromRGB(140, 220, 160)
-statsTotalLbl.Font = Enum.Font.GothamBold
-statsTotalLbl.TextSize = 10
-statsTotalLbl.TextXAlignment = Enum.TextXAlignment.Left
-statsTotalLbl.ZIndex = 4
-statsTotalLbl.Parent = statsContainer
-
-local statRowLabels = {}
-for idx, srcName in ipairs(SOURCE_ORDER) do
-	local row = Instance.new("TextLabel")
-	row.Size = UDim2.new(1, -6, 0, 17)
-	row.Position = UDim2.new(0, 2, 0, 46 + (idx - 1) * 18)
-	row.BackgroundColor3 = (idx % 2 == 0) and Color3.fromRGB(30, 33, 42) or Color3.fromRGB(26, 28, 36)
-	row.BorderSizePixel = 0
-	row.Text = " " .. srcName .. ": 0 (0%)"
-	row.TextColor3 = Color3.fromRGB(220, 225, 235)
-	row.Font = Enum.Font.Gotham
-	row.TextSize = 9
-	row.TextXAlignment = Enum.TextXAlignment.Left
-	row.ZIndex = 4
-	row.Parent = statsContainer
-	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
-	statRowLabels[srcName] = row
+-- ==================== STATISTICS TAB (NatroMacro v2 Style) ====================
+-- Top Sub-tabs: Pollen sources | Pollen fields | Tokens | Other
+local subSourcesBtn = mkBtn(statsContainer, 0, 0.00, 1, 0.31, -2, "Pollen sources", Color3.fromRGB(235, 238, 245))
+local subFieldsBtn  = mkBtn(statsContainer, 0, 0.31, 1, 0.27, -2, "Pollen fields", Color3.fromRGB(36, 40, 50))
+local subTokensBtn  = mkBtn(statsContainer, 0, 0.58, 1, 0.21, -2, "Tokens", Color3.fromRGB(36, 40, 50))
+local subOtherBtn   = mkBtn(statsContainer, 0, 0.79, 1, 0.21, -2, "Other", Color3.fromRGB(36, 40, 50))
+for _, sb in ipairs({ subSourcesBtn, subFieldsBtn, subTokensBtn, subOtherBtn }) do
+	sb.TextSize = 9
 end
 
-local resetStatsBtn = mkBtn(statsContainer, 212, 0, 2, 1, -4, "Reset Session Stats", Color3.fromRGB(140, 55, 65))
+-- Period Selector: Last hour | Uptime (Session) | All time
+local perHourBtn    = mkBtn(statsContainer, 26, 0.00, 1, 0.33, -2, "Last hour", Color3.fromRGB(40, 45, 58))
+local perSessionBtn = mkBtn(statsContainer, 26, 0.33, 1, 0.34, -2, "Uptime", Color3.fromRGB(52, 115, 195))
+local perAllTimeBtn = mkBtn(statsContainer, 26, 0.67, 1, 0.33, -2, "All time", Color3.fromRGB(40, 45, 58))
+for _, pb in ipairs({ perHourBtn, perSessionBtn, perAllTimeBtn }) do
+	pb.TextSize = 9
+end
+
+-- Header summary (Total + Hourly Rate)
+local statsHeaderLbl = Instance.new("TextLabel")
+statsHeaderLbl.Size = UDim2.new(1, -4, 0, 17)
+statsHeaderLbl.Position = UDim2.new(0, 2, 0, 52)
+statsHeaderLbl.BackgroundTransparency = 1
+statsHeaderLbl.Text = "0 (0/h)"
+statsHeaderLbl.TextColor3 = Color3.fromRGB(165, 180, 205)
+statsHeaderLbl.Font = Enum.Font.GothamBold
+statsHeaderLbl.TextSize = 10
+statsHeaderLbl.TextXAlignment = Enum.TextXAlignment.Left
+statsHeaderLbl.ZIndex = 4
+statsHeaderLbl.Parent = statsContainer
+
+-- Scrollable List for all items
+local statsScroll = Instance.new("ScrollingFrame")
+statsScroll.Size = UDim2.new(1, -2, 1, -100)
+statsScroll.Position = UDim2.new(0, 1, 0, 71)
+statsScroll.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
+statsScroll.BorderSizePixel = 0
+statsScroll.ScrollBarThickness = 4
+statsScroll.ScrollBarImageColor3 = Color3.fromRGB(95, 105, 125)
+statsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+statsScroll.ZIndex = 4
+statsScroll.Parent = statsContainer
+Instance.new("UICorner", statsScroll).CornerRadius = UDim.new(0, 6)
+
+-- Bottom Action Buttons: Save Stats File | Reset
+local saveStatsBtn = mkBtn(statsContainer, 0, 0, 1, 0.64, -3, "Save Stats File", Color3.fromRGB(235, 238, 245))
+saveStatsBtn.Position = UDim2.new(0, 1, 1, -25)
+saveStatsBtn.TextColor3 = Color3.fromRGB(24, 26, 33)
+saveStatsBtn.Font = Enum.Font.GothamBold
+
+local resetStatsBtn = mkBtn(statsContainer, 0, 0.64, 1, 0.36, -2, "Reset", Color3.fromRGB(140, 55, 65))
+resetStatsBtn.Position = UDim2.new(0.64, 1, 1, -25)
 
 -- ==================== MISC TAB ====================
 local speedTitle = Instance.new("TextLabel")
@@ -672,8 +1085,8 @@ local flyToggleBtn = mkBtn(miscContainer, 62, 0, 2, 0.50, -3, "Fly: OFF", Color3
 local noclipToggleBtn = mkBtn(miscContainer, 62, 0.50, 2, 0.50, -4, "Noclip: OFF", Color3.fromRGB(55, 60, 75))
 
 local flySpeedLbl = Instance.new("TextLabel")
-flySpeedLbl.Size = UDim2.new(0.52, -4, 0, 24)
-flySpeedLbl.Position = UDim2.new(0, 2, 0, 90)
+flySpeedLbl.Size = UDim2.new(0.52, -4, 0, 23)
+flySpeedLbl.Position = UDim2.new(0, 2, 0, 89)
 flySpeedLbl.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
 flySpeedLbl.BorderSizePixel = 0
 flySpeedLbl.Text = "Fly speed"
@@ -684,18 +1097,18 @@ flySpeedLbl.ZIndex = 4
 flySpeedLbl.Parent = miscContainer
 Instance.new("UICorner", flySpeedLbl).CornerRadius = UDim.new(0, 6)
 
-local flyMinusBtn = mkBtn(miscContainer, 90, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
-local flyValBtn = mkBtn(miscContainer, 90, 0.66, 2, 0.20, -2, tostring(flySpeed), Color3.fromRGB(32, 35, 44))
+local flyMinusBtn = mkBtn(miscContainer, 89, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
+local flyValBtn = mkBtn(miscContainer, 89, 0.66, 2, 0.20, -2, tostring(flySpeed), Color3.fromRGB(32, 35, 44))
 flyValBtn.Font = Enum.Font.GothamBold
-local flyPlusBtn = mkBtn(miscContainer, 90, 0.86, 2, 0.14, -4, "+", Color3.fromRGB(40, 45, 58))
+local flyPlusBtn = mkBtn(miscContainer, 89, 0.86, 2, 0.14, -4, "+", Color3.fromRGB(40, 45, 58))
 
 -- Mobile Button toggle
-local mobToggleBtn = mkBtn(miscContainer, 118, 0, 2, 1, -4, "Show mobile button: OFF", Color3.fromRGB(55, 60, 75))
+local mobToggleBtn = mkBtn(miscContainer, 117, 0, 2, 1, -4, "Show mobile button: OFF", Color3.fromRGB(55, 60, 75))
 
--- Menu Size controls (Width & Height)
+-- Menu Size controls
 local sizeTitle = Instance.new("TextLabel")
 sizeTitle.Size = UDim2.new(1, -6, 0, 15)
-sizeTitle.Position = UDim2.new(0, 2, 0, 146)
+sizeTitle.Position = UDim2.new(0, 2, 0, 145)
 sizeTitle.BackgroundTransparency = 1
 sizeTitle.Text = "Menu Size (Width / Height)"
 sizeTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
@@ -706,8 +1119,8 @@ sizeTitle.ZIndex = 4
 sizeTitle.Parent = miscContainer
 
 local wLabel = Instance.new("TextLabel")
-wLabel.Size = UDim2.new(0.46, -4, 0, 24)
-wLabel.Position = UDim2.new(0, 2, 0, 163)
+wLabel.Size = UDim2.new(0.46, -4, 0, 23)
+wLabel.Position = UDim2.new(0, 2, 0, 162)
 wLabel.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
 wLabel.BorderSizePixel = 0
 wLabel.Text = "W: " .. menuWidth
@@ -718,12 +1131,12 @@ wLabel.ZIndex = 4
 wLabel.Parent = miscContainer
 Instance.new("UICorner", wLabel).CornerRadius = UDim.new(0, 6)
 
-local wMinusBtn = mkBtn(miscContainer, 163, 0.46, 2, 0.27, -3, "-W", Color3.fromRGB(40, 45, 58))
-local wPlusBtn = mkBtn(miscContainer, 163, 0.73, 2, 0.27, -4, "+W", Color3.fromRGB(40, 45, 58))
+local wMinusBtn = mkBtn(miscContainer, 162, 0.46, 2, 0.27, -3, "-W", Color3.fromRGB(40, 45, 58))
+local wPlusBtn = mkBtn(miscContainer, 162, 0.73, 2, 0.27, -4, "+W", Color3.fromRGB(40, 45, 58))
 
 local hLabel = Instance.new("TextLabel")
-hLabel.Size = UDim2.new(0.46, -4, 0, 24)
-hLabel.Position = UDim2.new(0, 2, 0, 191)
+hLabel.Size = UDim2.new(0.46, -4, 0, 23)
+hLabel.Position = UDim2.new(0, 2, 0, 189)
 hLabel.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
 hLabel.BorderSizePixel = 0
 hLabel.Text = "H: " .. menuHeight
@@ -734,10 +1147,10 @@ hLabel.ZIndex = 4
 hLabel.Parent = miscContainer
 Instance.new("UICorner", hLabel).CornerRadius = UDim.new(0, 6)
 
-local hMinusBtn = mkBtn(miscContainer, 191, 0.46, 2, 0.27, -3, "-H", Color3.fromRGB(40, 45, 58))
-local hPlusBtn = mkBtn(miscContainer, 191, 0.73, 2, 0.27, -4, "+H", Color3.fromRGB(40, 45, 58))
+local hMinusBtn = mkBtn(miscContainer, 189, 0.46, 2, 0.27, -3, "-H", Color3.fromRGB(40, 45, 58))
+local hPlusBtn = mkBtn(miscContainer, 189, 0.73, 2, 0.27, -4, "+H", Color3.fromRGB(40, 45, 58))
 
-local resetSizeBtn = mkBtn(miscContainer, 219, 0, 2, 1, -4, "Reset Menu Size", Color3.fromRGB(45, 52, 68))
+local resetSizeBtn = mkBtn(miscContainer, 217, 0, 2, 1, -4, "Reset Menu Size", Color3.fromRGB(45, 52, 68))
 
 -- Clipboard helper
 local function copyToClipboard(text)
@@ -786,24 +1199,170 @@ local function applyMoveSpeed()
 	end
 end
 
-local function refreshStatsUI()
-	statsModeSessionBtn.BackgroundColor3 = (statsMode == "Session") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
-	statsModeAllBtn.BackgroundColor3 = (statsMode == "AllTime") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
-
-	local activeTable = (statsMode == "Session") and sessionPollen or allTimePollen
-	local total = (statsMode == "Session") and sessionTotalPollen or allTimeTotalPollen
-
-	statsTotalLbl.Text = ((statsMode == "Session") and "Session Pollen: " or "All-Time Pollen: ") .. formatNumber(total)
-	resetStatsBtn.Text = (statsMode == "Session") and "Reset Session Stats" or "Reset All-Time Stats"
-
-	for _, srcName in ipairs(SOURCE_ORDER) do
-		local val = activeTable[srcName] or 0
-		local pct = (total > 0) and math.floor((val / total) * 100 + 0.5) or 0
-		local lbl = statRowLabels[srcName]
-		if lbl then
-			lbl.Text = " " .. srcName .. ": " .. formatNumber(val) .. " (" .. pct .. "%)"
+local function computeLastHourData()
+	local cutoff = tick() - 3600
+	local total = 0
+	local sources = {}
+	local fields = {}
+	for _, s in ipairs(POLLEN_SOURCES) do
+		sources[s] = 0
+	end
+	local validIdx = 1
+	for i = 1, #lastHourEvents do
+		local ev = lastHourEvents[i]
+		if ev.t >= cutoff then
+			lastHourEvents[validIdx] = ev
+			validIdx += 1
+			total += ev.pollen
+			fields[ev.field] = (fields[ev.field] or 0) + ev.pollen
+			for tagName, active in pairs(ev.tags) do
+				if active then
+					sources[tagName] = (sources[tagName] or 0) + ev.pollen
+				end
+			end
 		end
 	end
+	for i = validIdx, #lastHourEvents do
+		lastHourEvents[i] = nil
+	end
+	return total, sources, fields
+end
+
+local function refreshStatsUI()
+	-- Highlight active sub-tab
+	local subMap = {
+		PollenSources = subSourcesBtn,
+		PollenFields = subFieldsBtn,
+		Tokens = subTokensBtn,
+		Other = subOtherBtn
+	}
+	for k, btn in pairs(subMap) do
+		if k == statsCategory then
+			btn.BackgroundColor3 = Color3.fromRGB(235, 238, 245)
+			btn.TextColor3 = Color3.fromRGB(20, 22, 28)
+		else
+			btn.BackgroundColor3 = Color3.fromRGB(36, 40, 50)
+			btn.TextColor3 = Color3.fromRGB(210, 215, 225)
+		end
+	end
+
+	-- Highlight active period
+	perHourBtn.BackgroundColor3 = (statsPeriod == "LastHour") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
+	perSessionBtn.BackgroundColor3 = (statsPeriod == "Session") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
+	perAllTimeBtn.BackgroundColor3 = (statsPeriod == "AllTime") and Color3.fromRGB(52, 115, 195) or Color3.fromRGB(40, 45, 58)
+
+	local totalPollen = 0
+	local mapData = {}
+	local showPct = true
+
+	if statsPeriod == "LastHour" then
+		local hTotal, hSources, hFields = computeLastHourData()
+		totalPollen = hTotal
+		local rate = (sessionSeconds > 0) and (hTotal / math.min(3600, sessionSeconds) * 3600) or 0
+		statsHeaderLbl.Text = formatNumber(hTotal) .. " (" .. formatNumber(rate) .. "/h)"
+		if statsCategory == "PollenSources" then
+			mapData = hSources
+		elseif statsCategory == "PollenFields" then
+			mapData = hFields
+		elseif statsCategory == "Tokens" then
+			mapData = sessionStats.Tokens
+			showPct = false
+		else
+			mapData = sessionStats.Other
+			showPct = false
+		end
+	elseif statsPeriod == "Session" then
+		totalPollen = sessionStats.TotalPollen
+		local rate = (sessionSeconds > 0) and (totalPollen / sessionSeconds * 3600) or 0
+		statsHeaderLbl.Text = formatNumber(totalPollen) .. " (" .. formatNumber(rate) .. "/h)"
+		if statsCategory == "PollenSources" then
+			mapData = sessionStats.Sources
+		elseif statsCategory == "PollenFields" then
+			mapData = sessionStats.Fields
+		elseif statsCategory == "Tokens" then
+			mapData = sessionStats.Tokens
+			showPct = false
+		else
+			mapData = sessionStats.Other
+			showPct = false
+		end
+	else
+		totalPollen = allTimeStats.TotalPollen
+		statsHeaderLbl.Text = formatNumber(totalPollen) .. " (All time)"
+		if statsCategory == "PollenSources" then
+			mapData = allTimeStats.Sources
+		elseif statsCategory == "PollenFields" then
+			mapData = allTimeStats.Fields
+		elseif statsCategory == "Tokens" then
+			mapData = allTimeStats.Tokens
+			showPct = false
+		else
+			mapData = allTimeStats.Other
+			showPct = false
+		end
+	end
+
+	-- Sort entries descending like NatroMacro v2
+	local rows = {}
+	for k, v in pairs(mapData) do
+		if statsCategory == "PollenSources" or v > 0 then
+			table.insert(rows, { name = k, val = v })
+		end
+	end
+	table.sort(rows, function(a, b)
+		if a.val == b.val then
+			return a.name < b.name
+		end
+		return a.val > b.val
+	end)
+
+	for _, child in ipairs(statsScroll:GetChildren()) do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+
+	for i, item in ipairs(rows) do
+		local rowFrame = Instance.new("Frame")
+		rowFrame.Size = UDim2.new(1, -6, 0, 18)
+		rowFrame.Position = UDim2.new(0, 2, 0, (i - 1) * 19 + 2)
+		rowFrame.BackgroundColor3 = (i % 2 == 0) and Color3.fromRGB(27, 30, 38) or Color3.fromRGB(22, 24, 31)
+		rowFrame.BorderSizePixel = 0
+		rowFrame.ZIndex = 5
+		rowFrame.Parent = statsScroll
+		Instance.new("UICorner", rowFrame).CornerRadius = UDim.new(0, 4)
+
+		local nameLbl = Instance.new("TextLabel")
+		nameLbl.Size = UDim2.new(0.56, 0, 1, 0)
+		nameLbl.Position = UDim2.new(0, 5, 0, 0)
+		nameLbl.BackgroundTransparency = 1
+		nameLbl.Text = item.name
+		nameLbl.TextColor3 = Color3.fromRGB(240, 243, 250)
+		nameLbl.Font = Enum.Font.GothamSemibold
+		nameLbl.TextSize = 9
+		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+		nameLbl.ZIndex = 6
+		nameLbl.Parent = rowFrame
+
+		local valLbl = Instance.new("TextLabel")
+		valLbl.Size = UDim2.new(0.44, -6, 1, 0)
+		valLbl.Position = UDim2.new(0.56, 0, 0, 0)
+		valLbl.BackgroundTransparency = 1
+		if showPct then
+			local pct = (totalPollen > 0) and (item.val / totalPollen * 100) or 0
+			valLbl.Text = string.format("%.1f%%  %s", pct, formatNumber(item.val))
+		else
+			valLbl.Text = formatNumber(item.val)
+		end
+		valLbl.TextColor3 = Color3.fromRGB(165, 175, 195)
+		valLbl.Font = Enum.Font.Gotham
+		valLbl.TextSize = 9
+		valLbl.TextXAlignment = Enum.TextXAlignment.Right
+		valLbl.ZIndex = 6
+		valLbl.Parent = rowFrame
+	end
+
+	statsScroll.CanvasSize = UDim2.new(0, 0, 0, #rows * 19 + 6)
 end
 
 local function refresh()
@@ -854,7 +1413,9 @@ local function refresh()
 	end
 
 	-- Statistics
-	refreshStatsUI()
+	if currentTab == "Statistics" then
+		refreshStatsUI()
+	end
 
 	-- Misc
 	speedToggleBtn.Text = speedEnabled and "Speed: ON" or "Speed: OFF"
@@ -911,6 +1472,7 @@ end)
 
 bindTap(tabStatsBtn, function()
 	currentTab = "Statistics"
+	refreshStatsUI()
 	refresh()
 end)
 
@@ -1007,29 +1569,65 @@ bindTap(useGlitterNowBtn, function()
 	refresh()
 end)
 
--- Statistics events
-bindTap(statsModeSessionBtn, function()
-	statsMode = "Session"
+-- Statistics Sub-tab & Period events
+bindTap(subSourcesBtn, function()
+	statsCategory = "PollenSources"
 	refreshStatsUI()
 end)
 
-bindTap(statsModeAllBtn, function()
-	statsMode = "AllTime"
+bindTap(subFieldsBtn, function()
+	statsCategory = "PollenFields"
 	refreshStatsUI()
+end)
+
+bindTap(subTokensBtn, function()
+	statsCategory = "Tokens"
+	refreshStatsUI()
+end)
+
+bindTap(subOtherBtn, function()
+	statsCategory = "Other"
+	refreshStatsUI()
+end)
+
+bindTap(perHourBtn, function()
+	statsPeriod = "LastHour"
+	refreshStatsUI()
+end)
+
+bindTap(perSessionBtn, function()
+	statsPeriod = "Session"
+	refreshStatsUI()
+end)
+
+bindTap(perAllTimeBtn, function()
+	statsPeriod = "AllTime"
+	refreshStatsUI()
+end)
+
+bindTap(saveStatsBtn, function()
+	local exportedName = "uze9r_stats_export_" .. os.time() .. ".json"
+	saveAllTimeStats()
+	local ok = saveAllTimeStats(exportedName)
+	saveStatsBtn.Text = ok and "Saved!" or "Saved (Memory)"
+	task.delay(1.4, function()
+		if saveStatsBtn and saveStatsBtn.Parent then
+			saveStatsBtn.Text = "Save Stats File"
+		end
+	end)
 end)
 
 bindTap(resetStatsBtn, function()
-	if statsMode == "Session" then
-		for _, k in ipairs(SOURCE_ORDER) do
-			sessionPollen[k] = 0
-		end
-		sessionTotalPollen = 0
-	else
-		for _, k in ipairs(SOURCE_ORDER) do
-			allTimePollen[k] = 0
-		end
-		allTimeTotalPollen = 0
+	if statsPeriod == "AllTime" then
+		allTimeStats = newStatBucket()
+		for _, s in ipairs(POLLEN_SOURCES) do allTimeStats.Sources[s] = 0 end
+		for _, fld in ipairs(FIELD_NAMES) do allTimeStats.Fields[fld] = 0 end
 		saveAllTimeStats()
+	else
+		sessionStats = newStatBucket()
+		for _, s in ipairs(POLLEN_SOURCES) do sessionStats.Sources[s] = 0 end
+		for _, fld in ipairs(FIELD_NAMES) do sessionStats.Fields[fld] = 0 end
+		table.clear(lastHourEvents)
 	end
 	refreshStatsUI()
 end)
@@ -1116,25 +1714,25 @@ end)
 
 -- Misc events: Menu Size
 bindTap(wMinusBtn, function()
-	menuWidth = math.clamp(menuWidth - 16, 260, 460)
+	menuWidth = math.clamp(menuWidth - 16, 290, 480)
 	applyMenuSize()
 	refresh()
 end)
 
 bindTap(wPlusBtn, function()
-	menuWidth = math.clamp(menuWidth + 16, 260, 460)
+	menuWidth = math.clamp(menuWidth + 16, 290, 480)
 	applyMenuSize()
 	refresh()
 end)
 
 bindTap(hMinusBtn, function()
-	menuHeight = math.clamp(menuHeight - 16, 300, 480)
+	menuHeight = math.clamp(menuHeight - 16, 320, 500)
 	applyMenuSize()
 	refresh()
 end)
 
 bindTap(hPlusBtn, function()
-	menuHeight = math.clamp(menuHeight + 16, 300, 480)
+	menuHeight = math.clamp(menuHeight + 16, 320, 500)
 	applyMenuSize()
 	refresh()
 end)
@@ -1180,19 +1778,19 @@ local function hookCharacterTools(char)
 	end
 	char.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then
-			lastEquippedToolName = child.Name
+			recentTriggers.EquippedTool = child.Name
 			child.Activated:Connect(function()
-				lastToolSwingTime = tick()
-				lastEquippedToolName = child.Name
+				recentTriggers.ToolSwing = tick()
+				recentTriggers.EquippedTool = child.Name
 			end)
 		end
 	end)
 	local existingTool = char:FindFirstChildOfClass("Tool")
 	if existingTool then
-		lastEquippedToolName = existingTool.Name
+		recentTriggers.EquippedTool = existingTool.Name
 		existingTool.Activated:Connect(function()
-			lastToolSwingTime = tick()
-			lastEquippedToolName = existingTool.Name
+			recentTriggers.ToolSwing = tick()
+			recentTriggers.EquippedTool = existingTool.Name
 		end)
 	end
 end
@@ -1200,29 +1798,7 @@ end
 if lp.Character then
 	hookCharacterTools(lp.Character)
 end
-
--- Pollen Tracking via CoreStats.Pollen delta
-task.spawn(function()
-	local coreStats = lp:WaitForChild("CoreStats", 15)
-	local pollenStat = coreStats and coreStats:WaitForChild("Pollen", 15)
-	if not pollenStat then
-		return
-	end
-
-	local lastPollen = pollenStat.Value
-	pollenStat:GetPropertyChangedSignal("Value"):Connect(function()
-		local cur = pollenStat.Value
-		local delta = cur - lastPollen
-		lastPollen = cur
-		if delta > 0 then
-			local src = detectPollenSource(true)
-			recordPollenGain(delta, src)
-			if currentTab == "Statistics" then
-				refreshStatsUI()
-			end
-		end
-	end)
-end)
+scanPlayerHive()
 
 -- Stepped loop for Noclip
 RunService.Stepped:Connect(function()
@@ -1287,6 +1863,7 @@ end)
 lp.CharacterAdded:Connect(function(char)
 	hookCharacterTools(char)
 	task.wait(0.5)
+	scanPlayerHive()
 	if speedEnabled then
 		applyMoveSpeed()
 	end
@@ -1314,8 +1891,8 @@ task.spawn(function()
 					end
 				end
 				if tool then
-					lastToolSwingTime = tick()
-					lastEquippedToolName = tool.Name
+					recentTriggers.ToolSwing = tick()
+					recentTriggers.EquippedTool = tool.Name
 					tool:Activate()
 				end
 			end)
@@ -1397,6 +1974,8 @@ task.spawn(function()
 		elseif currentTab == "Farm" and autoGlitterEnabled then
 			local gLeft = math.max(0, glitterMinutes * 60 - glitterElapsedSeconds)
 			glitterInfo.Text = string.format("Next glitter in: %02d:%02d", math.floor(gLeft / 60), gLeft % 60)
+		elseif currentTab == "Statistics" then
+			refreshStatsUI()
 		end
 	end
 end)
