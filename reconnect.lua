@@ -3,6 +3,7 @@ local TeleportService = game:GetService("TeleportService")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PLACE_ID = 1537690962
 local OWNER_HANDLE = "@uze9r"
@@ -24,6 +25,9 @@ local isRejoining = false
 
 local autoDigEnabled = false
 local autoTokensEnabled = false
+local autoGlitterEnabled = false
+local glitterMinutes = 15
+local glitterElapsedSeconds = 0
 
 local speedEnabled = false
 local moveSpeed = 35
@@ -195,6 +199,24 @@ local function startFly()
 	flyBV.Parent = root
 end
 
+local function useGlitterItem()
+	pcall(function()
+		local events = ReplicatedStorage:FindFirstChild("Events")
+		local actEvent = events and events:FindFirstChild("PlayerActivesCommand")
+		if actEvent and actEvent:IsA("RemoteEvent") then
+			actEvent:FireServer({ Name = "Glitter" })
+			return
+		end
+
+		for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+			if obj:IsA("RemoteEvent") and (obj.Name == "PlayerActivesCommand" or obj.Name == "UseItem" or obj.Name == "ItemCommand") then
+				obj:FireServer({ Name = "Glitter" })
+				obj:FireServer("Glitter")
+			end
+		end
+	end)
+end
+
 bindTap(x, function()
 	if mobileBtnVisible then
 		f.Visible = false
@@ -243,7 +265,7 @@ local tabMainBtn = mkSideTab(6, "Main")
 local tabFarmBtn = mkSideTab(38, "Farm")
 local tabMiscBtn = mkSideTab(70, "Misc")
 
--- Content Area (plain Frames instead of ScrollingFrame so mobile taps register reliably)
+-- Content Area
 local contentArea = Instance.new("Frame")
 contentArea.Name = "ContentArea"
 contentArea.Size = UDim2.new(1, -(SIDEBAR_W + 14), 1, -54)
@@ -362,18 +384,37 @@ farmTitle.Parent = farmContainer
 local autoDigBtn = mkBtn(farmContainer, 24, 0, 2, 1, -4, "Auto-Dig: OFF", Color3.fromRGB(55, 60, 75))
 local autoTokensBtn = mkBtn(farmContainer, 52, 0, 2, 1, -4, "Auto-Collect Tokens: OFF", Color3.fromRGB(55, 60, 75))
 
-local farmHint = Instance.new("TextLabel")
-farmHint.Size = UDim2.new(1, -6, 0, 44)
-farmHint.Position = UDim2.new(0, 2, 0, 82)
-farmHint.BackgroundTransparency = 1
-farmHint.Text = "Auto-Dig swings equipped collector. Auto-Collect pulls toward nearby field tokens."
-farmHint.TextColor3 = Color3.fromRGB(150, 158, 175)
-farmHint.Font = Enum.Font.Gotham
-farmHint.TextSize = 10
-farmHint.TextWrapped = true
-farmHint.TextXAlignment = Enum.TextXAlignment.Left
-farmHint.ZIndex = 4
-farmHint.Parent = farmContainer
+local glitterTitle = Instance.new("TextLabel")
+glitterTitle.Size = UDim2.new(1, -6, 0, 16)
+glitterTitle.Position = UDim2.new(0, 2, 0, 82)
+glitterTitle.BackgroundTransparency = 1
+glitterTitle.Text = "Auto-Glitter / Reglitter (15 - 60m)"
+glitterTitle.TextColor3 = Color3.fromRGB(200, 206, 220)
+glitterTitle.Font = Enum.Font.GothamSemibold
+glitterTitle.TextSize = 10
+glitterTitle.TextXAlignment = Enum.TextXAlignment.Left
+glitterTitle.ZIndex = 4
+glitterTitle.Parent = farmContainer
+
+local glitterToggleBtn = mkBtn(farmContainer, 100, 0, 2, 0.52, -4, "Auto-Glitter: OFF", Color3.fromRGB(55, 60, 75))
+local glitterMinusBtn = mkBtn(farmContainer, 100, 0.52, 2, 0.14, -2, "-", Color3.fromRGB(40, 45, 58))
+local glitterValBtn = mkBtn(farmContainer, 100, 0.66, 2, 0.20, -2, "15m", Color3.fromRGB(32, 35, 44))
+glitterValBtn.Font = Enum.Font.GothamBold
+local glitterPlusBtn = mkBtn(farmContainer, 100, 0.86, 2, 0.14, -4, "+", Color3.fromRGB(40, 45, 58))
+
+local useGlitterNowBtn = mkBtn(farmContainer, 128, 0, 2, 1, -4, "Use Glitter Now", Color3.fromRGB(52, 115, 195))
+
+local glitterInfo = Instance.new("TextLabel")
+glitterInfo.Size = UDim2.new(1, -6, 0, 16)
+glitterInfo.Position = UDim2.new(0, 2, 0, 156)
+glitterInfo.BackgroundTransparency = 1
+glitterInfo.Text = "Auto-Glitter: OFF (15m)"
+glitterInfo.TextColor3 = Color3.fromRGB(175, 182, 198)
+glitterInfo.Font = Enum.Font.Gotham
+glitterInfo.TextSize = 10
+glitterInfo.TextXAlignment = Enum.TextXAlignment.Left
+glitterInfo.ZIndex = 4
+glitterInfo.Parent = farmContainer
 
 -- ==================== MISC TAB ====================
 local speedTitle = Instance.new("TextLabel")
@@ -558,6 +599,17 @@ local function refresh()
 	autoTokensBtn.Text = autoTokensEnabled and "Auto-Collect Tokens: ON" or "Auto-Collect Tokens: OFF"
 	autoTokensBtn.BackgroundColor3 = autoTokensEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
 
+	glitterToggleBtn.Text = autoGlitterEnabled and "Auto-Glitter: ON" or "Auto-Glitter: OFF"
+	glitterToggleBtn.BackgroundColor3 = autoGlitterEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
+	glitterValBtn.Text = glitterMinutes .. "m"
+
+	if autoGlitterEnabled then
+		local gLeft = math.max(0, glitterMinutes * 60 - glitterElapsedSeconds)
+		glitterInfo.Text = string.format("Next glitter in: %02d:%02d", math.floor(gLeft / 60), gLeft % 60)
+	else
+		glitterInfo.Text = "Auto-Glitter: OFF (" .. glitterMinutes .. "m)"
+	end
+
 	-- Misc
 	speedToggleBtn.Text = speedEnabled and "Speed: ON" or "Speed: OFF"
 	speedToggleBtn.BackgroundColor3 = speedEnabled and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(55, 60, 75)
@@ -663,6 +715,43 @@ end)
 
 bindTap(autoTokensBtn, function()
 	autoTokensEnabled = not autoTokensEnabled
+	refresh()
+end)
+
+bindTap(glitterToggleBtn, function()
+	autoGlitterEnabled = not autoGlitterEnabled
+	glitterElapsedSeconds = 0
+	if autoGlitterEnabled then
+		useGlitterItem()
+	end
+	refresh()
+end)
+
+bindTap(glitterMinusBtn, function()
+	glitterMinutes = math.clamp(glitterMinutes - 5, 15, 60)
+	glitterElapsedSeconds = 0
+	refresh()
+end)
+
+bindTap(glitterPlusBtn, function()
+	glitterMinutes = math.clamp(glitterMinutes + 5, 15, 60)
+	glitterElapsedSeconds = 0
+	refresh()
+end)
+
+local glitterPresets = { 15, 20, 30, 45, 60 }
+local glitterIdx = 1
+bindTap(glitterValBtn, function()
+	glitterIdx = (glitterIdx % #glitterPresets) + 1
+	glitterMinutes = glitterPresets[glitterIdx]
+	glitterElapsedSeconds = 0
+	refresh()
+end)
+
+bindTap(useGlitterNowBtn, function()
+	useGlitterItem()
+	glitterElapsedSeconds = 0
+	glitterInfo.Text = "Glitter used!"
 	refresh()
 end)
 
@@ -952,6 +1041,15 @@ task.spawn(function()
 			else
 				refresh()
 			end
+		end
+
+		if autoGlitterEnabled then
+			glitterElapsedSeconds += 1
+			if glitterElapsedSeconds >= glitterMinutes * 60 then
+				glitterElapsedSeconds = 0
+				useGlitterItem()
+			end
+			refresh()
 		end
 	end
 end)
